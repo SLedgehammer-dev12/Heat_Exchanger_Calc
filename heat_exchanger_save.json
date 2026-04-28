@@ -1,0 +1,20 @@
+{
+    "flow_type": "cross_unmixed",
+    "u_mode": "Basit Mod (Manuel U Değeri)",
+    "hot_fluid": "Doğal Gaz Türbin Egzoz Gazı (Manuel)",
+    "m_hot": 15.0,
+    "t_hot_in": 450.0,
+    "t_hot_out_opt": 120.0,
+    "cold_fluid": "Therminol 66",
+    "m_cold": 50.0,
+    "t_cold_in": 170.0,
+    "t_cold_out_opt": 290.0,
+    "U": 50.0,
+    "A": 500.0,
+    "Do": 25.4,
+    "Di": 21.1,
+    "L": 3.0,
+    "Nt": 100.0,
+    "tube_mat": "Karbon Çelik",
+    "hot_tube": "Soğuk Akışkan"
+}
