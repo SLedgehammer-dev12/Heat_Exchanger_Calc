@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from heat_exchanger import Fluid, FinTubeHeatExchanger
 from fluids_db import get_fluid_list_flat, get_fluid_data, get_mixture_fluid_data, materialize_fluid_data
 from reporting import build_calculation_report
-from updater import check_for_update, open_release_page
+from updater import check_for_update, download_release_asset, default_download_dir
 from version import APP_NAME, VERSION
 from logging_config import setup_logging
 
@@ -246,6 +246,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} Desktop v{VERSION}")
         self.resize(1100, 800)
         self.all_logs = []
+        self.latest_update_info = None
         self.initUI()
         self.setup_ui_logging()
         logger.info("Desktop application started. Version=%s", VERSION)
@@ -607,18 +608,47 @@ class HeatExchangerDesktopApp(QMainWindow):
 
     def check_for_updates(self, show_no_update=False):
         result = check_for_update()
+        self.latest_update_info = result
         self.append_log(result.get("message", ""), logging.INFO if result.get("ok") else logging.WARNING)
         if result.get("update_available"):
             reply = QMessageBox.information(
                 self,
                 "Güncelleme Bulundu",
-                f"{result['message']}\nMevcut sürüm: v{VERSION}\nRelease sayfası açılsın mı?",
+                f"{result['message']}\nMevcut sürüm: v{VERSION}\nGüncelleme paketi indirilsin mi?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
-                open_release_page(result.get("release_url"))
+                self.download_update(result)
         elif show_no_update:
             QMessageBox.information(self, "Güncelleme Kontrolü", result.get("message", "Güncelleme bulunamadı."))
+
+    def download_update(self, update_info=None):
+        update_info = update_info or self.latest_update_info
+        if not update_info or not update_info.get("update_available"):
+            QMessageBox.information(self, "Güncelleme", "İndirilecek yeni sürüm bulunamadı.")
+            return
+        target_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Güncelleme Paketinin İndirileceği Klasörü Seç",
+            default_download_dir(),
+        )
+        if not target_dir:
+            logger.info("Update download cancelled by user.")
+            return
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            logger.info("Downloading update to %s", target_dir)
+            result = download_release_asset(update_info, target_dir, app_kind="desktop", timeout=120)
+            logger.info("Update downloaded: %s (%s bytes)", result["path"], result["size"])
+            QMessageBox.information(
+                self,
+                "Güncelleme İndirildi",
+                f"Güncelleme paketi indirildi:\n{result['path']}\n\nProgramı kapatıp zip içindeki yeni sürümü kullanabilirsiniz.",
+            )
+        except Exception as exc:
+            self.show_error("Güncelleme İndirme Hatası", str(exc), exc)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def toggle_hot_fluid(self, text):
         is_mixture = self.is_exhaust_mixture(text)

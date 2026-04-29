@@ -1,4 +1,4 @@
-# Heat Exchanger Calc v0.1.3
+# Heat Exchanger Calc v0.1.4
 
 Patch release.
 
@@ -14,6 +14,8 @@ Patch release.
 - Fixes packaged ChEDL/thermo fallback failures caused by missing `chemicals` identifier data files.
 - Adds persistent rotating file logs under `%LOCALAPPDATA%\HeatExchangerCalc\logs\heat_exchanger_calc.log`.
 - Desktop error popups now include the log path, and the Help menu can open the log folder.
+- Update checks can now download the matching release zip directly from the app instead of opening the GitHub release page.
+- Desktop update download uses a folder picker; web update download writes to the user-provided local folder path.
 - Desktop PyQt5 interface and Streamlit web interface.
 - Save and load user input data as JSON.
 - Startup and manual GitHub release update checks.
@@ -25,8 +27,8 @@ Patch release.
 
 ## Windows Assets
 
-- `HeatExchangerCalcDesktop-v0.1.3-windows-x64.zip`
-- `HeatExchangerCalcWeb-v0.1.3-windows-x64.zip`
+- `HeatExchangerCalcDesktop-v0.1.4-windows-x64.zip`
+- `HeatExchangerCalcWeb-v0.1.4-windows-x64.zip`
 - `SHA256SUMS.txt`
 
 The executables are built with PyInstaller `--onedir --noupx`. They are not code-signed; some enterprise environments may still require allow-listing or a trusted code-signing certificate.

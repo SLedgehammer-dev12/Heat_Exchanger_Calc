@@ -31,7 +31,7 @@ def from_celsius(val, unit):
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
 from reporting import build_calculation_report
-from updater import check_for_update
+from updater import check_for_update, download_release_asset, default_download_dir
 from version import APP_NAME, VERSION
 
 FLOW_OPTIONS = [
@@ -328,7 +328,21 @@ if "update_checked" not in st.session_state:
 update_result = st.session_state.get("update_result")
 if update_result and update_result.get("update_available"):
     st.sidebar.warning(update_result["message"])
-    st.sidebar.link_button("Release sayfasını aç", update_result.get("release_url"))
+    target_dir = st.sidebar.text_input(
+        "İndirme klasörü",
+        value=st.session_state.get("update_download_dir", default_download_dir()),
+        key="update_download_dir",
+    )
+    if st.sidebar.button("Güncelleme Paketini İndir"):
+        try:
+            with st.sidebar.status("Güncelleme indiriliyor...", expanded=False):
+                download_result = download_release_asset(update_result, target_dir, app_kind="web", timeout=120)
+            st.sidebar.success(f"İndirildi: {download_result['path']}")
+            logger.info("Update downloaded: %s (%s bytes)", download_result["path"], download_result["size"])
+        except Exception as exc:
+            logger.exception("Update download failed.")
+            st.sidebar.error(f"Güncelleme indirilemedi: {exc}")
+            st.sidebar.caption(f"Detaylı log dosyası: {LOG_FILE}")
 elif update_result and not update_result.get("ok"):
     st.sidebar.info(update_result.get("message"))
 if st.sidebar.button("Güncellemeyi Kontrol Et"):
