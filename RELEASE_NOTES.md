@@ -1,4 +1,4 @@
-# Heat Exchanger Calc v0.1.2
+# Heat Exchanger Calc v0.1.3
 
 Patch release.
 
@@ -11,6 +11,9 @@ Patch release.
 - Adds editable exhaust gas composition on both hot and cold fluid sides.
 - Supports mole-percent and mass-percent exhaust gas composition, with mixture properties calculated from the selected composition.
 - Keeps viscosity and conductivity entry fields editable only for the explicit custom manual fluid option.
+- Fixes packaged ChEDL/thermo fallback failures caused by missing `chemicals` identifier data files.
+- Adds persistent rotating file logs under `%LOCALAPPDATA%\HeatExchangerCalc\logs\heat_exchanger_calc.log`.
+- Desktop error popups now include the log path, and the Help menu can open the log folder.
 - Desktop PyQt5 interface and Streamlit web interface.
 - Save and load user input data as JSON.
 - Startup and manual GitHub release update checks.
@@ -22,8 +25,8 @@ Patch release.
 
 ## Windows Assets
 
-- `HeatExchangerCalcDesktop-v0.1.2-windows-x64.zip`
-- `HeatExchangerCalcWeb-v0.1.2-windows-x64.zip`
+- `HeatExchangerCalcDesktop-v0.1.3-windows-x64.zip`
+- `HeatExchangerCalcWeb-v0.1.3-windows-x64.zip`
 - `SHA256SUMS.txt`
 
 The executables are built with PyInstaller `--onedir --noupx`. They are not code-signed; some enterprise environments may still require allow-listing or a trusted code-signing certificate.

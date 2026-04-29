@@ -126,20 +126,27 @@ def materialize_fluid_data(fluid_data, T_c=None):
     return data
 
 def get_chedl_mixture_fluid_data(comps, mole_fracs, T_c, P_pa):
-    from thermo import Mixture
+    try:
+        from thermo import Mixture
 
-    ids = [THERMO_NAME_MAP.get(name, name) for name in comps.keys()]
-    zs = [mole_fracs[name] for name in comps.keys()]
-    mix = Mixture(IDs=ids, zs=zs, T=T_c + 273.15, P=P_pa)
-    return {
-        'name': 'Mixture (ChEDL/thermo)',
-        'is_coolprop': False,
-        'cp': mix.Cp,
-        'density': mix.rho,
-        'mu': mix.mu,
-        'k_cond': mix.k,
-        'property_source': 'ChEDL/thermo'
-    }
+        ids = [THERMO_NAME_MAP.get(name, name) for name in comps.keys()]
+        zs = [mole_fracs[name] for name in comps.keys()]
+        mix = Mixture(IDs=ids, zs=zs, T=T_c + 273.15, P=P_pa)
+        return {
+            'name': 'Mixture (ChEDL/thermo)',
+            'is_coolprop': False,
+            'cp': mix.Cp,
+            'density': mix.rho,
+            'mu': mix.mu,
+            'k_cond': mix.k,
+            'property_source': 'ChEDL/thermo'
+        }
+    except FileNotFoundError as exc:
+        logger.exception("ChEDL/thermo veri dosyası bulunamadı. PyInstaller build komutunda chemicals/thermo data dosyaları eksik olabilir.")
+        raise FileNotFoundError(
+            f"{exc}. Paketleme hatası: ChEDL/thermo/chemicals veri dosyaları exe içine dahil edilmemiş. "
+            "Release paketini --collect-data chemicals --collect-data thermo --collect-data fluids ile yeniden oluşturun."
+        ) from exc
 
 def get_mixture_fluid_data(components, comp_type='mole', T_c=200.0, P_pa=101325.0):
     T_k = T_c + 273.15

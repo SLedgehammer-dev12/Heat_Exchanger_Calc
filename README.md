@@ -25,13 +25,13 @@ streamlit run app_web.py
 Desktop:
 
 ```powershell
-pyinstaller --noconfirm --clean --onedir --noupx --windowed --name HeatExchangerCalcDesktop --hidden-import scipy._cyutility --add-data "data;data" app_desktop.py
+pyinstaller --noconfirm --clean --onedir --noupx --windowed --name HeatExchangerCalcDesktop --hidden-import scipy._cyutility --collect-data chemicals --collect-data thermo --collect-data fluids --add-data "data;data" app_desktop.py
 ```
 
 Web launcher:
 
 ```powershell
-pyinstaller --noconfirm --clean --onedir --noupx --console --name HeatExchangerCalcWeb --hidden-import scipy._cyutility --hidden-import app_web --hidden-import fluids_db --hidden-import heat_exchanger --hidden-import reporting --hidden-import updater --hidden-import version --collect-all streamlit --copy-metadata streamlit --add-data "app_web.py;." --add-data "data;data" run_web.py
+pyinstaller --noconfirm --clean --onedir --noupx --console --name HeatExchangerCalcWeb --hidden-import scipy._cyutility --hidden-import app_web --hidden-import fluids_db --hidden-import heat_exchanger --hidden-import reporting --hidden-import updater --hidden-import version --hidden-import logging_config --collect-all streamlit --copy-metadata streamlit --collect-data chemicals --collect-data thermo --collect-data fluids --add-data "app_web.py;." --add-data "data;data" run_web.py
 ```
 
 Unsigned executables may still trigger reputation warnings on locked-down Windows environments. For enterprise deployment, code-sign the final executables with a trusted certificate.

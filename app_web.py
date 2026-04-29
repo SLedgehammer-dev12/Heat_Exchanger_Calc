@@ -4,6 +4,10 @@ import pandas as pd
 import streamlit as st
 import logging
 import io
+from logging_config import setup_logging
+
+LOG_FILE = setup_logging("web")
+logger = logging.getLogger(__name__)
 
 def to_kg_s(val, unit, density):
     if unit == "kg/h": return val / 3600.0
@@ -313,6 +317,7 @@ if uploaded_file is not None:
             st.session_state["last_uploaded_file"] = uploaded_file.name
             st.toast("Veriler yüklendi", icon="✅")
     except Exception as exc:
+        logger.exception("Saved input file could not be loaded.")
         st.sidebar.error(f"Dosya yüklenemedi: {exc}")
 
 st.sidebar.header("Sürüm ve Güncelleme")
@@ -652,7 +657,9 @@ if not hata_var:
         m_cold = to_kg_s(m_cold_raw, u_m_cold, rho_c)
         
     except Exception as exc:
+        logger.exception("Fluid property preparation failed.")
         st.error(f"Akışkan özellikleri veya çevrim sırasında hata oluştu: {exc}")
+        st.caption(f"Detaylı log dosyası: {LOG_FILE}")
         hata_var = True
 
 if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary"):
@@ -665,9 +672,12 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
     # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
-    # Remove old handlers to prevent duplicate lines on rerun
+    # Remove old in-memory Streamlit handlers to prevent duplicate lines on rerun.
+    # Keep the persistent file handler installed by logging_config.
     for h in root_logger.handlers[:]:
-        root_logger.removeHandler(h)
+        if getattr(h, "_streamlit_run_handler", False):
+            root_logger.removeHandler(h)
+    handler._streamlit_run_handler = True
     root_logger.addHandler(handler)
     # ----------------------------------
 
@@ -694,7 +704,9 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 U_value = geo_res["U"]
                 Area = geo_res["A_total"]
             except Exception as exc:
+                root_logger.exception("Geometric calculation failed.")
                 st.error(f"Geometrik hesaplama hatası: {exc}")
+                st.caption(f"Detaylı log dosyası: {LOG_FILE}")
                 st.stop()
         else:
             hx.U = U_value
@@ -714,7 +726,9 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             except Exception as exc:
                 pychemengg_warning = f"PyChemEngg doğrulaması çalışmadı: {exc}"
         except Exception as exc:
+            root_logger.exception("Calculation engine failed.")
             st.error(f"Hesaplama motoru hatası: {exc}")
+            st.caption(f"Detaylı log dosyası: {LOG_FILE}")
             st.stop()
 
         res_main = res_custom

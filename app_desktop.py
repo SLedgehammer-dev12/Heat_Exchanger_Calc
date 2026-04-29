@@ -1,5 +1,6 @@
 import sys
 import json
+import os
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QFormLayout, QComboBox, QDoubleSpinBox, QPushButton, QCheckBox,
@@ -15,9 +16,13 @@ from fluids_db import get_fluid_list_flat, get_fluid_data, get_mixture_fluid_dat
 from reporting import build_calculation_report
 from updater import check_for_update, open_release_page
 from version import APP_NAME, VERSION
+from logging_config import setup_logging
 
 import logging
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
+
+LOG_FILE = setup_logging("desktop")
+logger = logging.getLogger(__name__)
 
 class QLogHandler(logging.Handler, QObject):
     log_signal = pyqtSignal(str, int)
@@ -27,8 +32,11 @@ class QLogHandler(logging.Handler, QObject):
         QObject.__init__(self)
 
     def emit(self, record):
-        msg = self.format(record)
-        self.log_signal.emit(msg, record.levelno)
+        try:
+            msg = self.format(record)
+            self.log_signal.emit(msg, record.levelno)
+        except Exception:
+            pass
 
 from PyQt5.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox
 
@@ -239,7 +247,16 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.resize(1100, 800)
         self.all_logs = []
         self.initUI()
+        self.setup_ui_logging()
+        logger.info("Desktop application started. Version=%s", VERSION)
         QTimer.singleShot(1500, self.check_updates_on_startup)
+
+    def setup_ui_logging(self):
+        self.qt_log_handler = QLogHandler()
+        self.qt_log_handler.setLevel(logging.DEBUG)
+        self.qt_log_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S"))
+        self.qt_log_handler.log_signal.connect(self.append_log)
+        logging.getLogger().addHandler(self.qt_log_handler)
         
     def initUI(self):
         # Menu Bar for Save/Load
@@ -261,6 +278,10 @@ class HeatExchangerDesktopApp(QMainWindow):
         updateAct.triggered.connect(lambda: self.check_for_updates(show_no_update=True))
         helpMenu.addAction(updateAct)
 
+        logAct = QAction('Log Klasörünü Aç', self)
+        logAct.triggered.connect(self.open_log_folder)
+        helpMenu.addAction(logAct)
+
         aboutAct = QAction('Hakkında', self)
         aboutAct.triggered.connect(lambda: QMessageBox.information(
             self,
@@ -268,6 +289,20 @@ class HeatExchangerDesktopApp(QMainWindow):
             f"{APP_NAME} v{VERSION}\nFin-tube heat exchanger calculation and reporting tool."
         ))
         helpMenu.addAction(aboutAct)
+
+    def open_log_folder(self):
+        os.startfile(os.path.dirname(LOG_FILE))
+
+    def show_error(self, title, message, exc=None):
+        if exc is not None:
+            logger.exception("%s: %s", title, message)
+        else:
+            logger.error("%s: %s", title, message)
+        QMessageBox.critical(
+            self,
+            title,
+            f"{message}\n\nDetaylı log dosyası:\n{LOG_FILE}",
+        )
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -541,7 +576,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                         
                 QMessageBox.information(self, "Başarılı", "Rapor başarıyla kaydedildi!")
             except Exception as e:
-                QMessageBox.critical(self, "Hata", f"Kaydetme hatası: {str(e)}")
+                self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
 
 
     
@@ -705,6 +740,7 @@ class HeatExchangerDesktopApp(QMainWindow):
             with open(fileName, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
             QMessageBox.information(self, "Başarılı", "Veriler başarıyla kaydedildi.")
+            logger.info("Input data saved: %s", fileName)
 
     def load_data(self):
         options = QFileDialog.Options()
@@ -755,9 +791,16 @@ class HeatExchangerDesktopApp(QMainWindow):
                 
                 QMessageBox.information(self, "Başarılı", "Veriler başarıyla yüklendi.")
             except Exception as e:
-                QMessageBox.critical(self, "Hata", f"Dosya yüklenirken hata oluştu: {str(e)}")
+                self.show_error("Hata", f"Dosya yüklenirken hata oluştu: {str(e)}", e)
 
     def calculate(self):
+        logger.info(
+            "Calculation requested. hot=%s cold=%s u_mode=%s solver=%s",
+            self.combo_hot.currentText(),
+            self.combo_cold.currentText(),
+            self.combo_u_mode.currentText(),
+            self.combo_method.currentText(),
+        )
         T_hot = to_celsius(self.spin_t_hot.value(), self.combo_u_t_hot.currentText())
         T_cold = to_celsius(self.spin_t_cold.value(), self.combo_u_t_cold.currentText())
         m_hot_raw = self.spin_m_hot.value()
@@ -771,13 +814,14 @@ class HeatExchangerDesktopApp(QMainWindow):
             hot_data = materialize_fluid_data(get_fluid_data(self.combo_hot.currentText()), T_hot)
             cold_data = materialize_fluid_data(get_fluid_data(self.combo_cold.currentText()), T_cold)
         except Exception as e:
-            QMessageBox.critical(self, "Akışkan Hatası", str(e))
+            self.show_error("Akışkan Hatası", str(e), e)
             return
         
         try:
             if hot_data["is_coolprop"]:
                 hot_fluid = Fluid(name=hot_data["name"], is_coolprop=True, calc_temp_c=T_hot)
             elif hot_data.get("is_mixture"):
+                logger.info("Calculating hot exhaust mixture properties. basis=%s comp=%s", self.hot_mixture_basis, self.hot_mixture_data)
                 hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type=self.hot_mixture_basis, T_c=T_hot, P_pa=101325.0)
                 hot_fluid = Fluid(name="Özel Egzoz Gazı", cp=hot_mix['cp'], density=hot_mix['density'], mu=hot_mix['mu'], k_cond=hot_mix['k_cond'], is_coolprop=False)
             else:
@@ -793,6 +837,7 @@ class HeatExchangerDesktopApp(QMainWindow):
             if cold_data["is_coolprop"]:
                 cold_fluid = Fluid(name=cold_data["name"], is_coolprop=True, calc_temp_c=T_cold)
             elif cold_data.get("is_mixture"):
+                logger.info("Calculating cold exhaust mixture properties. basis=%s comp=%s", self.cold_mixture_basis, self.cold_mixture_data)
                 cold_mix = get_mixture_fluid_data(self.cold_mixture_data, comp_type=self.cold_mixture_basis, T_c=T_cold, P_pa=101325.0)
                 cold_fluid = Fluid(name="Özel Egzoz Gazı", cp=cold_mix['cp'], density=cold_mix['density'], mu=cold_mix['mu'], k_cond=cold_mix['k_cond'], is_coolprop=False)
             else:
@@ -805,7 +850,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                     is_coolprop=False,
                 )
         except Exception as e:
-            QMessageBox.critical(self, "Akışkan Hatası", str(e))
+            self.show_error("Akışkan Hatası", str(e), e)
             return
             
         m_hot = to_kg_s(m_hot_raw, self.combo_u_m_hot.currentText(), hot_fluid.density)
@@ -874,7 +919,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                     + (f"\n{geo_warnings}" if geo_warnings else "")
                 )
             except Exception as e:
-                QMessageBox.critical(self, "Geometrik Hata", f"Geometrik U hesaplanamadı: {str(e)}\nAkışkan özellikleri eksik olabilir.")
+                self.show_error("Geometrik Hata", f"Geometrik U hesaplanamadı: {str(e)}\nAkışkan özellikleri eksik olabilir.", e)
                 return
         else:
             geom = {}
@@ -906,7 +951,7 @@ class HeatExchangerDesktopApp(QMainWindow):
             except Exception as e:
                 pychemengg_warning = f"PyChemEngg doğrulaması çalışmadı: {e}"
         except Exception as e:
-            QMessageBox.critical(self, "Hesaplama Hatası", str(e))
+            self.show_error("Hesaplama Hatası", str(e), e)
             return
         
         # Seçili olan ana metodu belirle
