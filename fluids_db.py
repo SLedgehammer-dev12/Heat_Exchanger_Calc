@@ -4,7 +4,7 @@
 FLUID_OPTIONS = {
     "Gazlar (Gases)": {
         "Hava (Air)": {"name": "Air", "is_coolprop": True},
-        "Doğal Gaz Türbin Egzoz Gazı (Manuel)": {"name": "Exhaust Gas", "is_coolprop": False, "cp": 1100.0, "density": 0.5},
+        "Doğal Gaz Türbin Egzoz Gazı (Manuel)": {"name": "Exhaust Gas Mixture", "is_coolprop": False, "is_mixture": True, "cp": 1100.0, "density": 0.5},
         "Karbondioksit (CO2)": {"name": "CO2", "is_coolprop": True},
         "Metan (CH4)": {"name": "Methane", "is_coolprop": True},
         "Azot (N2)": {"name": "Nitrogen", "is_coolprop": True},

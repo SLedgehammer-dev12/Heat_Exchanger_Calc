@@ -91,6 +91,8 @@ DEFAULT_STATE = {
     "density_hot": 0.5,
     "mu_hot": 2e-5,
     "k_hot": 0.03,
+    "hot_mix_data": {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0},
+    "hot_mix_basis": "mole",
     "cold_fluid_sel": "Therminol 66",
     "m_cold": 5.0,
     "T_cold_in": 120.0,
@@ -99,6 +101,8 @@ DEFAULT_STATE = {
     "density_cold": 850.0,
     "mu_cold": 0.001,
     "k_cold": 0.15,
+    "cold_mix_data": {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0},
+    "cold_mix_basis": "mole",
     "U_value": 50.0,
     "Area": 200.0,
     "D_o_mm": 25.4,
@@ -160,6 +164,91 @@ def build_manual_fluid(fluid_data, cp, density, mu, k_cond):
         k_cond=k_cond,
         is_coolprop=False,
     )
+
+
+MIXTURE_GASES = [
+    "Nitrogen",
+    "Oxygen",
+    "CarbonDioxide",
+    "Water",
+    "Argon",
+    "CarbonMonoxide",
+    "Methane",
+    "Hydrogen",
+    "SulfurDioxide",
+]
+MIXTURE_PRESETS = {
+    "Doğal Gaz": {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0},
+    "Kömür": {"Nitrogen": 72.0, "Oxygen": 6.0, "Water": 6.0, "CarbonDioxide": 15.0, "SulfurDioxide": 1.0},
+    "Biyogaz": {"Nitrogen": 65.0, "Oxygen": 5.0, "Water": 15.0, "CarbonDioxide": 15.0},
+}
+
+
+def is_mixture_selection(label, fluid_data):
+    return bool(fluid_data.get("is_mixture")) or "Egzoz" in label or "Kompozisyon" in label
+
+
+def is_custom_manual_selection(label):
+    return "Manuel Giriş" in label
+
+
+def render_mixture_editor(side_label, state_prefix, T_c):
+    mix_key = f"{state_prefix}_mix_data"
+    basis_key = f"{state_prefix}_mix_basis"
+    if mix_key not in st.session_state:
+        st.session_state[mix_key] = dict(DEFAULT_STATE[mix_key])
+    if basis_key not in st.session_state:
+        st.session_state[basis_key] = DEFAULT_STATE[basis_key]
+
+    with st.expander(f"🔧 {side_label} egzoz gazı kompozisyonu", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        for col, preset_name in zip((c1, c2, c3), MIXTURE_PRESETS):
+            if col.button(preset_name, key=f"{state_prefix}_preset_{preset_name}"):
+                st.session_state[mix_key] = dict(MIXTURE_PRESETS[preset_name])
+
+        basis = st.radio(
+            "Kompozisyon bazı",
+            options=["mole", "mass"],
+            format_func=lambda value: "Molar yüzde (%)" if value == "mole" else "Kütlesel yüzde (%)",
+            horizontal=True,
+            key=basis_key,
+        )
+        value_label = "Molar Yüzde (%)" if basis == "mole" else "Kütlesel Yüzde (%)"
+        df_mix = pd.DataFrame(
+            list(st.session_state[mix_key].items()),
+            columns=["Bileşen", value_label],
+        )
+        edited_df = st.data_editor(
+            df_mix,
+            num_rows="dynamic",
+            key=f"{state_prefix}_mix_editor",
+            column_config={
+                "Bileşen": st.column_config.SelectboxColumn(options=MIXTURE_GASES),
+                value_label: st.column_config.NumberColumn(min_value=0.0, format="%.4f"),
+            },
+        )
+
+        new_mix = {}
+        for _, row in edited_df.iterrows():
+            if pd.notna(row["Bileşen"]) and pd.notna(row[value_label]):
+                gas = str(row["Bileşen"])
+                val = float(row[value_label])
+                if val > 0:
+                    new_mix[gas] = new_mix.get(gas, 0.0) + val
+        st.session_state[mix_key] = new_mix
+        total_pct = sum(new_mix.values())
+        if total_pct <= 0:
+            st.error("Kompozisyon toplamı sıfırdan büyük olmalıdır.")
+        elif abs(total_pct - 100.0) > 0.5:
+            st.warning(f"Kompozisyon toplamı {total_pct:.2f}%. Hesaplamada normalize edilecek.")
+
+        mixture_data = get_mixture_fluid_data(new_mix, comp_type=basis, T_c=T_c, P_pa=101325.0)
+        st.success(
+            f"Hesaplanan karışım özellikleri: Cp={mixture_data['cp']:.1f} J/kgK, "
+            f"Rho={mixture_data['density']:.3f} kg/m3, "
+            f"mu={mixture_data['mu']:.6f} Pa.s, k={mixture_data['k_cond']:.4f} W/mK"
+        )
+        return mixture_data, new_mix, basis
 
 
 def save_state(current_data):
@@ -313,44 +402,21 @@ with tab_inputs:
         mu_hot = float(get_val("mu_hot") if get_val("mu_hot") is not None else 2e-5)
         k_hot = float(get_val("k_hot") if get_val("k_hot") is not None else 0.03)
 
-        if hot_data.get("is_mixture"):
-            with st.expander("🔧 Kompozisyon Ayarları", expanded=True):
-                c1, c2, c3 = st.columns(3)
-                if c1.button("Doğal Gaz"):
-                    st.session_state["hot_mix"] = {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0}
-                if c2.button("Kömür"):
-                    st.session_state["hot_mix"] = {"Nitrogen": 72.0, "Oxygen": 6.0, "Water": 6.0, "CarbonDioxide": 15.0, "SulfurDioxide": 1.0}
-                if c3.button("Biyogaz"):
-                    st.session_state["hot_mix"] = {"Nitrogen": 65.0, "Oxygen": 5.0, "Water": 15.0, "CarbonDioxide": 15.0}
-                    
-                if "hot_mix" not in st.session_state:
-                    st.session_state["hot_mix"] = {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0}
-                
-                df_mix = pd.DataFrame(list(st.session_state["hot_mix"].items()), columns=["Bileşen", "Molar Yüzde (%)"])
-                edited_df = st.data_editor(df_mix, num_rows="dynamic", column_config={"Bileşen": st.column_config.SelectboxColumn(options=["Nitrogen", "Oxygen", "CarbonDioxide", "Water", "Argon", "CarbonMonoxide", "Methane", "Hydrogen", "SulfurDioxide"])})
-                
-                new_mix = {}
-                for _, row in edited_df.iterrows():
-                    if pd.notna(row["Bileşen"]) and pd.notna(row["Molar Yüzde (%)"]):
-                        gas = str(row["Bileşen"])
-                        val = float(row["Molar Yüzde (%)"])
-                        new_mix[gas] = new_mix.get(gas, 0.0) + val
-                st.session_state["hot_mix"] = new_mix
-                
-                hot_mix_data = get_mixture_fluid_data(new_mix, comp_type="mole", T_c=T_hot_in, P_pa=101325.0)
-                cp_hot = hot_mix_data["cp"]
-                density_hot = hot_mix_data["density"]
-                mu_hot = hot_mix_data["mu"]
-                k_hot = hot_mix_data["k_cond"]
-                st.success(f"Hesaplanan Karışım Özellikleri: Cp={cp_hot:.1f} J/kgK, Rho={density_hot:.3f} kg/m3")
+        if is_mixture_selection(hot_fluid_sel, hot_data):
+            hot_data["is_mixture"] = True
+            hot_mix_data, hot_mix, hot_mix_basis = render_mixture_editor("Sıcak akışkan", "hot", T_hot_in)
+            cp_hot = hot_mix_data["cp"]
+            density_hot = hot_mix_data["density"]
+            mu_hot = hot_mix_data["mu"]
+            k_hot = hot_mix_data["k_cond"]
 
         elif not hot_data["is_coolprop"]:
             st.warning("Bu akışkanın özellikleri manuel girilmelidir")
             cp_hot = st.number_input("Hot Cp (J/kg.K)", value=cp_hot)
             density_hot = st.number_input("Hot Density (kg/m³)", min_value=0.001, value=density_hot, format="%.3f")
-            if u_calc_mode == U_MODE_OPTIONS[1]:
-                mu_hot = st.number_input("Hot Dynamic Viscosity (Pa.s)", value=mu_hot, format="%.6f")
-                k_hot = st.number_input("Hot Thermal Conductivity (W/m.K)", value=k_hot, format="%.4f")
+            manual_hot = is_custom_manual_selection(hot_fluid_sel)
+            mu_hot = st.number_input("Hot Dynamic Viscosity (Pa.s)", value=mu_hot, format="%.6f", disabled=not manual_hot)
+            k_hot = st.number_input("Hot Thermal Conductivity (W/m.K)", value=k_hot, format="%.4f", disabled=not manual_hot)
 
         current_data.update(
             {
@@ -362,6 +428,8 @@ with tab_inputs:
                 "density_hot": density_hot,
                 "mu_hot": mu_hot,
                 "k_hot": k_hot,
+                "hot_mix_data": st.session_state.get("hot_mix_data", DEFAULT_STATE["hot_mix_data"]),
+                "hot_mix_basis": st.session_state.get("hot_mix_basis", DEFAULT_STATE["hot_mix_basis"]),
             }
         )
 
@@ -401,15 +469,23 @@ with tab_inputs:
         mu_cold = float(get_val("mu_cold") if get_val("mu_cold") is not None else 0.001)
         k_cold = float(get_val("k_cold") if get_val("k_cold") is not None else 0.15)
 
-        if not cold_data["is_coolprop"]:
+        if is_mixture_selection(cold_fluid_sel, cold_data):
+            cold_data["is_mixture"] = True
+            cold_mix_data, cold_mix, cold_mix_basis = render_mixture_editor("Soğuk akışkan", "cold", T_cold_in)
+            cp_cold = cold_mix_data["cp"]
+            density_cold = cold_mix_data["density"]
+            mu_cold = cold_mix_data["mu"]
+            k_cold = cold_mix_data["k_cond"]
+
+        elif not cold_data["is_coolprop"]:
             st.warning("Bu akışkanın özellikleri manuel girilmelidir")
             cp_cold = st.number_input("Cold Cp (J/kg.K)", value=cp_cold)
             density_cold = st.number_input(
                 "Cold Density (kg/m³)", min_value=0.001, value=density_cold, format="%.3f"
             )
-            if u_calc_mode == U_MODE_OPTIONS[1]:
-                mu_cold = st.number_input("Cold Dynamic Viscosity (Pa.s)", value=mu_cold, format="%.6f")
-                k_cold = st.number_input("Cold Thermal Conductivity (W/m.K)", value=k_cold, format="%.4f")
+            manual_cold = is_custom_manual_selection(cold_fluid_sel)
+            mu_cold = st.number_input("Cold Dynamic Viscosity (Pa.s)", value=mu_cold, format="%.6f", disabled=not manual_cold)
+            k_cold = st.number_input("Cold Thermal Conductivity (W/m.K)", value=k_cold, format="%.4f", disabled=not manual_cold)
 
         current_data.update(
             {
@@ -421,6 +497,8 @@ with tab_inputs:
                 "density_cold": density_cold,
                 "mu_cold": mu_cold,
                 "k_cold": k_cold,
+                "cold_mix_data": st.session_state.get("cold_mix_data", DEFAULT_STATE["cold_mix_data"]),
+                "cold_mix_basis": st.session_state.get("cold_mix_basis", DEFAULT_STATE["cold_mix_basis"]),
             }
         )
 

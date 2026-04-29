@@ -91,7 +91,7 @@ def fluid_report_data(label, fluid_data, fluid_obj):
     }
 
 class CompositionDialog(QDialog):
-    def __init__(self, parent=None, current_comp=None):
+    def __init__(self, parent=None, current_comp=None, current_basis="mole"):
         super().__init__(parent)
         self.setWindowTitle('Egzoz Gazı Kompozisyonu Düzenleyici')
         self.resize(500, 400)
@@ -111,9 +111,15 @@ class CompositionDialog(QDialog):
         preset_layout.addWidget(btn_coal)
         preset_layout.addWidget(btn_bio)
         self.layout.addLayout(preset_layout)
+
+        self.combo_basis = QComboBox()
+        self.combo_basis.addItems(["Molar yüzde (%)", "Kütlesel yüzde (%)"])
+        self.combo_basis.setCurrentText("Kütlesel yüzde (%)" if current_basis == "mass" else "Molar yüzde (%)")
+        self.layout.addWidget(QLabel("Kompozisyon Bazı"))
+        self.layout.addWidget(self.combo_basis)
         
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['Gaz Bileşeni', 'Molar Yüzde (%)'])
+        self.table.setHorizontalHeaderLabels(['Gaz Bileşeni', 'Oran (%)'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.table)
         
@@ -177,6 +183,9 @@ class CompositionDialog(QDialog):
                 except:
                     pass
         return comp
+
+    def get_basis(self):
+        return "mass" if "Kütlesel" in self.combo_basis.currentText() else "mole"
 
 
 
@@ -308,6 +317,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         
         self.combo_hot.currentTextChanged.connect(self.toggle_hot_fluid)
         self.hot_mixture_data = {'Nitrogen': 76.0, 'Oxygen': 11.0, 'Water': 6.0, 'CarbonDioxide': 7.0}
+        self.hot_mixture_basis = "mole"
         
         self.spin_m_hot = QDoubleSpinBox(); self.spin_m_hot.setRange(0.001, 100000); self.spin_m_hot.setValue(15.0)
         self.combo_u_m_hot = create_unit_combo(["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"])
@@ -344,6 +354,14 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_cold = QComboBox()
         self.combo_cold.addItems(fluid_list)
         self.combo_cold.setCurrentText("Therminol 66")
+
+        self.btn_edit_comp_cold = QPushButton("🔧 Kompozisyon Düzenle")
+        self.btn_edit_comp_cold.setStyleSheet("background-color: #3498db; color: white; font-weight: bold;")
+        self.btn_edit_comp_cold.clicked.connect(self.open_cold_composition_editor)
+        self.btn_edit_comp_cold.hide()
+        self.combo_cold.currentTextChanged.connect(self.toggle_cold_fluid)
+        self.cold_mixture_data = {'Nitrogen': 76.0, 'Oxygen': 11.0, 'Water': 6.0, 'CarbonDioxide': 7.0}
+        self.cold_mixture_basis = "mole"
         
         self.spin_m_cold = QDoubleSpinBox(); self.spin_m_cold.setRange(0.001, 100000); self.spin_m_cold.setValue(5.0)
         self.combo_u_m_cold = create_unit_combo(["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"])
@@ -356,6 +374,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.spin_k_cold = QDoubleSpinBox(); self.spin_k_cold.setRange(0.001, 1000); self.spin_k_cold.setDecimals(4); self.spin_k_cold.setValue(0.15); self.spin_k_cold.setSuffix(" W/mK")
         
         form_cold.addRow("Akışkan:", self.combo_cold)
+        form_cold.addRow("", self.btn_edit_comp_cold)
         form_cold.addRow("Debi:", create_input_row(self.spin_m_cold, self.combo_u_m_cold))
         form_cold.addRow("Giriş Sıc.:", create_input_row(self.spin_t_cold, self.combo_u_t_cold))
         self.lbl_t_cold_out = QLabel("Çıkış Sıc.:")
@@ -505,6 +524,8 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.tabs.addTab(self.tab_log, "📝 Sistem Logları")
         
         self.toggle_purpose(self.combo_purpose.currentText())
+        self.toggle_hot_fluid(self.combo_hot.currentText())
+        self.toggle_cold_fluid(self.combo_cold.currentText())
 
     def export_report(self):
         if not hasattr(self, 'last_res_main'):
@@ -565,15 +586,44 @@ class HeatExchangerDesktopApp(QMainWindow):
             QMessageBox.information(self, "Güncelleme Kontrolü", result.get("message", "Güncelleme bulunamadı."))
 
     def toggle_hot_fluid(self, text):
-        if 'Kompozisyon' in text:
-            self.btn_edit_comp.show()
-        else:
-            self.btn_edit_comp.hide()
+        is_mixture = self.is_exhaust_mixture(text)
+        self.btn_edit_comp.setVisible(is_mixture)
+        self.set_manual_property_controls("hot", self.is_custom_manual(text))
+
+    def toggle_cold_fluid(self, text):
+        is_mixture = self.is_exhaust_mixture(text)
+        self.btn_edit_comp_cold.setVisible(is_mixture)
+        self.set_manual_property_controls("cold", self.is_custom_manual(text))
+
+    def is_exhaust_mixture(self, text):
+        data = get_fluid_data(text) or {}
+        return bool(data.get("is_mixture")) or "Egzoz" in text or "Kompozisyon" in text
+
+    def is_custom_manual(self, text):
+        return "Manuel Giriş" in text
+
+    def set_manual_property_controls(self, side, enabled):
+        widgets = (
+            (self.spin_mu_hot, self.spin_k_hot)
+            if side == "hot"
+            else (self.spin_mu_cold, self.spin_k_cold)
+        )
+        for widget in widgets:
+            widget.setEnabled(enabled)
             
     def open_composition_editor(self):
-        dialog = CompositionDialog(self, self.hot_mixture_data)
+        dialog = CompositionDialog(self, self.hot_mixture_data, self.hot_mixture_basis)
         if dialog.exec_():
             self.hot_mixture_data = dialog.get_composition()
+            self.hot_mixture_basis = dialog.get_basis()
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, 'Bilgi', 'Kompozisyon kaydedildi.')
+
+    def open_cold_composition_editor(self):
+        dialog = CompositionDialog(self, self.cold_mixture_data, self.cold_mixture_basis)
+        if dialog.exec_():
+            self.cold_mixture_data = dialog.get_composition()
+            self.cold_mixture_basis = dialog.get_basis()
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.information(self, 'Bilgi', 'Kompozisyon kaydedildi.')
             
@@ -608,6 +658,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "u_mode": self.combo_u_mode.currentText(),
                 "hot_fluid_sel": self.combo_hot.currentText(),
                 "hot_fluid": self.combo_hot.currentText(),
+                "hot_mixture_data": self.hot_mixture_data,
+                "hot_mixture_basis": self.hot_mixture_basis,
                 "m_hot": self.spin_m_hot.value(),
                 "T_hot_in": self.spin_t_hot.value(),
                 "t_hot_in": self.spin_t_hot.value(),
@@ -615,6 +667,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "t_hot_out_opt": self.spin_t_hot_out.value(),
                 "cold_fluid_sel": self.combo_cold.currentText(),
                 "cold_fluid": self.combo_cold.currentText(),
+                "cold_mixture_data": self.cold_mixture_data,
+                "cold_mixture_basis": self.cold_mixture_basis,
                 "m_cold": self.spin_m_cold.value(),
                 "T_cold_in": self.spin_t_cold.value(),
                 "t_cold_in": self.spin_t_cold.value(),
@@ -664,11 +718,15 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.combo_method.setCurrentText(data.get("solver_method", "Kendi Algoritmamız (Epsilon-NTU)"))
                 self.combo_u_mode.setCurrentText(data.get("u_mode", "Basit Mod"))
                 self.combo_hot.setCurrentText(data.get("hot_fluid", "Therminol 66"))
+                self.hot_mixture_data = data.get("hot_mixture_data", self.hot_mixture_data)
+                self.hot_mixture_basis = data.get("hot_mixture_basis", self.hot_mixture_basis)
                 self.spin_m_hot.setValue(data.get("m_hot", 15.0))
                 self.spin_t_hot.setValue(data.get("t_hot_in", 450.0))
                 self.spin_t_hot_out.setValue(data.get("t_hot_out_opt", -999.0))
                 
                 self.combo_cold.setCurrentText(data.get("cold_fluid", "Su"))
+                self.cold_mixture_data = data.get("cold_mixture_data", self.cold_mixture_data)
+                self.cold_mixture_basis = data.get("cold_mixture_basis", self.cold_mixture_basis)
                 self.spin_m_cold.setValue(data.get("m_cold", 5.0))
                 self.spin_t_cold.setValue(data.get("t_cold_in", 120.0))
                 self.spin_t_cold_out.setValue(data.get("t_cold_out_opt", -999.0))
@@ -692,6 +750,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_fin_t.setValue(data.get("fin_t", 0.4))
                 self.spin_fin_dens.setValue(data.get("fin_dens", 400.0))
                 self.combo_fin_mat.setCurrentText(data.get("fin_mat", "Alüminyum (k=237)"))
+                self.toggle_hot_fluid(self.combo_hot.currentText())
+                self.toggle_cold_fluid(self.combo_cold.currentText())
                 
                 QMessageBox.information(self, "Başarılı", "Veriler başarıyla yüklendi.")
             except Exception as e:
@@ -718,7 +778,7 @@ class HeatExchangerDesktopApp(QMainWindow):
             if hot_data["is_coolprop"]:
                 hot_fluid = Fluid(name=hot_data["name"], is_coolprop=True, calc_temp_c=T_hot)
             elif hot_data.get("is_mixture"):
-                hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type='mole', T_c=T_hot, P_pa=101325.0)
+                hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type=self.hot_mixture_basis, T_c=T_hot, P_pa=101325.0)
                 hot_fluid = Fluid(name="Özel Egzoz Gazı", cp=hot_mix['cp'], density=hot_mix['density'], mu=hot_mix['mu'], k_cond=hot_mix['k_cond'], is_coolprop=False)
             else:
                 hot_fluid = Fluid(
@@ -732,6 +792,9 @@ class HeatExchangerDesktopApp(QMainWindow):
                 
             if cold_data["is_coolprop"]:
                 cold_fluid = Fluid(name=cold_data["name"], is_coolprop=True, calc_temp_c=T_cold)
+            elif cold_data.get("is_mixture"):
+                cold_mix = get_mixture_fluid_data(self.cold_mixture_data, comp_type=self.cold_mixture_basis, T_c=T_cold, P_pa=101325.0)
+                cold_fluid = Fluid(name="Özel Egzoz Gazı", cp=cold_mix['cp'], density=cold_mix['density'], mu=cold_mix['mu'], k_cond=cold_mix['k_cond'], is_coolprop=False)
             else:
                 cold_fluid = Fluid(
                     name=cold_data["name"],
@@ -778,14 +841,17 @@ class HeatExchangerDesktopApp(QMainWindow):
                 cold_data = materialize_fluid_data(get_fluid_data(cold_name), T_cold)
                 
                 if hot_data and hot_data.get('is_mixture'):
-                    hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type='mole', T_c=T_hot, P_pa=101325.0)
+                    hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type=self.hot_mixture_basis, T_c=T_hot, P_pa=101325.0)
                     hx.hot_fluid = Fluid(name="Özel Egzoz Gazı", is_coolprop=False, cp=hot_mix['cp'], density=hot_mix['density'], mu=hot_mix['mu'], k_cond=hot_mix['k_cond'])
                 elif hot_data and not hot_data.get('is_coolprop'):
                     hx.hot_fluid = Fluid(name=hot_name, is_coolprop=False, cp=hot_data.get('cp', 1000.0), density=hot_data.get('density', 1.0), mu=self.spin_mu_hot.value(), k_cond=self.spin_k_hot.value())
                 else:
                     hx.hot_fluid = Fluid(name=hot_data['name'] if hot_data else hot_name, is_coolprop=True, calc_temp_c=T_hot)
 
-                if cold_data and not cold_data.get('is_coolprop'):
+                if cold_data and cold_data.get('is_mixture'):
+                    cold_mix = get_mixture_fluid_data(self.cold_mixture_data, comp_type=self.cold_mixture_basis, T_c=T_cold, P_pa=101325.0)
+                    hx.cold_fluid = Fluid(name="Özel Egzoz Gazı", is_coolprop=False, cp=cold_mix['cp'], density=cold_mix['density'], mu=cold_mix['mu'], k_cond=cold_mix['k_cond'])
+                elif cold_data and not cold_data.get('is_coolprop'):
                     hx.cold_fluid = Fluid(name=cold_name, is_coolprop=False, cp=cold_data.get('cp', 1000.0), density=cold_data.get('density', 1.0), mu=self.spin_mu_cold.value(), k_cond=self.spin_k_cold.value())
                 else:
                     hx.cold_fluid = Fluid(name=cold_data['name'] if cold_data else cold_name, is_coolprop=True, calc_temp_c=T_cold)
