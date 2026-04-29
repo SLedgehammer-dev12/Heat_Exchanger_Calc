@@ -1,4 +1,4 @@
-# Heat Exchanger Calc v0.1.4
+# Heat Exchanger Calc v0.1.5
 
 Patch release.
 
@@ -16,6 +16,8 @@ Patch release.
 - Desktop error popups now include the log path, and the Help menu can open the log folder.
 - Update checks can now download the matching release zip directly from the app instead of opening the GitHub release page.
 - Desktop update download uses a folder picker; web update download writes to the user-provided local folder path.
+- Fixes desktop startup UI construction after the log-folder menu addition; the main input panel now initializes correctly.
+- Fixes saved-data loading error caused by missing desktop form widgets.
 - Desktop PyQt5 interface and Streamlit web interface.
 - Save and load user input data as JSON.
 - Startup and manual GitHub release update checks.
@@ -27,8 +29,8 @@ Patch release.
 
 ## Windows Assets
 
-- `HeatExchangerCalcDesktop-v0.1.4-windows-x64.zip`
-- `HeatExchangerCalcWeb-v0.1.4-windows-x64.zip`
+- `HeatExchangerCalcDesktop-v0.1.5-windows-x64.zip`
+- `HeatExchangerCalcWeb-v0.1.5-windows-x64.zip`
 - `SHA256SUMS.txt`
 
 The executables are built with PyInstaller `--onedir --noupx`. They are not code-signed; some enterprise environments may still require allow-listing or a trusted code-signing certificate.

@@ -291,20 +291,6 @@ class HeatExchangerDesktopApp(QMainWindow):
         ))
         helpMenu.addAction(aboutAct)
 
-    def open_log_folder(self):
-        os.startfile(os.path.dirname(LOG_FILE))
-
-    def show_error(self, title, message, exc=None):
-        if exc is not None:
-            logger.exception("%s: %s", title, message)
-        else:
-            logger.error("%s: %s", title, message)
-        QMessageBox.critical(
-            self,
-            title,
-            f"{message}\n\nDetaylı log dosyası:\n{LOG_FILE}",
-        )
-
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
@@ -562,6 +548,20 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.toggle_purpose(self.combo_purpose.currentText())
         self.toggle_hot_fluid(self.combo_hot.currentText())
         self.toggle_cold_fluid(self.combo_cold.currentText())
+
+    def open_log_folder(self):
+        os.startfile(os.path.dirname(LOG_FILE))
+
+    def show_error(self, title, message, exc=None):
+        if exc is not None:
+            logger.exception("%s: %s", title, message)
+        else:
+            logger.error("%s: %s", title, message)
+        QMessageBox.critical(
+            self,
+            title,
+            f"{message}\n\nDetaylı log dosyası:\n{LOG_FILE}",
+        )
 
     def export_report(self):
         if not hasattr(self, 'last_res_main'):
