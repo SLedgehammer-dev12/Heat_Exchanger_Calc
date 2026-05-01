@@ -5,7 +5,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QFormLayout, QComboBox, QDoubleSpinBox, QPushButton, QCheckBox,
                              QLabel, QTabWidget, QTableWidget, QTableWidgetItem, QMessageBox, 
-                             QGroupBox, QMenuBar, QAction, QFileDialog, QStackedWidget)
+                             QGroupBox, QMenuBar, QAction, QFileDialog, QStackedWidget, QProgressBar)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -13,10 +13,17 @@ import matplotlib.pyplot as plt
 
 from heat_exchanger import Fluid, FinTubeHeatExchanger
 from fluids_db import get_fluid_list_flat, get_fluid_data, get_mixture_fluid_data, materialize_fluid_data
-from reporting import build_calculation_report
+from reporting import build_calculation_report, build_calculation_report_pdf
 from updater import check_for_update, download_release_asset, default_download_dir
 from version import APP_NAME, VERSION
 from logging_config import setup_logging
+from engineering_utils import (
+    fluid_report_data,
+    from_celsius,
+    result_warnings,
+    to_celsius,
+    to_kg_s,
+)
 
 import logging
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
@@ -38,26 +45,53 @@ class QLogHandler(logging.Handler, QObject):
         except Exception:
             pass
 
-from PyQt5.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox
+
+class CalculationWorker(QObject):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str, str, object)
+
+    def __init__(self, snapshot):
+        super().__init__()
+        self.snapshot = snapshot
+
+    def run(self):
+        try:
+            self.finished.emit(compute_desktop_calculation(self.snapshot))
+        except Exception as exc:
+            logger.exception("Desktop background calculation failed.")
+            self.failed.emit("Hesaplama Hatası", str(exc), exc)
 
 
-def to_kg_s(val, unit, density):
-    if unit == "kg/h": return val / 3600.0
-    if unit == "lb/s": return val * 0.453592
-    if unit == "m³/s": return val * density
-    if unit == "m³/h": return (val / 3600.0) * density
-    if unit == "CFM": return (val * 0.000471947) * density
-    return val
+class UpdateDownloadWorker(QObject):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str, str, object)
 
-def to_celsius(val, unit):
-    if unit == "°F": return (val - 32.0) * 5.0 / 9.0
-    if unit == "K": return val - 273.15
-    return val
+    def __init__(self, update_info, target_dir):
+        super().__init__()
+        self.update_info = update_info
+        self.target_dir = target_dir
 
-def from_celsius(val, unit):
-    if unit == "°F": return (val * 9.0 / 5.0) + 32.0
-    if unit == "K": return val + 273.15
-    return val
+    def run(self):
+        try:
+            result = download_release_asset(self.update_info, self.target_dir, app_kind="desktop", timeout=120)
+            self.finished.emit(result)
+        except Exception as exc:
+            logger.exception("Update download failed.")
+            self.failed.emit("Güncelleme İndirme Hatası", str(exc), exc)
+
+
+class UpdateCheckWorker(QObject):
+    finished = pyqtSignal(object, bool)
+
+    def __init__(self, show_no_update):
+        super().__init__()
+        self.show_no_update = show_no_update
+
+    def run(self):
+        self.finished.emit(check_for_update(), self.show_no_update)
+
+from PyQt5.QtWidgets import QDialog, QHeaderView
+
 
 def create_unit_combo(items):
     c = QComboBox()
@@ -76,26 +110,146 @@ def create_input_row(spin, combo):
     return w
 
 
-def result_warnings(*results):
-    warnings = []
-    for result in results:
-        if not result:
-            continue
-        for msg in result.get("warnings", []):
-            if msg not in warnings:
-                warnings.append(msg)
-    return warnings
+
+def build_fluid_from_selection(selection, fluid_data, mixture_data, mixture_basis, temp_c, mu, k_cond):
+    if fluid_data["is_coolprop"]:
+        return Fluid(name=fluid_data["name"], is_coolprop=True, calc_temp_c=temp_c)
+    if fluid_data.get("is_mixture"):
+        logger.info("Calculating exhaust mixture properties. fluid=%s basis=%s comp=%s", selection, mixture_basis, mixture_data)
+        mix = get_mixture_fluid_data(mixture_data, comp_type=mixture_basis, T_c=temp_c, P_pa=101325.0)
+        fluid = Fluid(
+            name="Özel Egzoz Gazı",
+            cp=mix["cp"],
+            density=mix["density"],
+            mu=mix["mu"],
+            k_cond=mix["k_cond"],
+            is_coolprop=False,
+        )
+        fluid.property_source = mix.get("property_source")
+        return fluid
+    return Fluid(
+        name=fluid_data["name"],
+        cp=fluid_data.get("cp", 1000.0),
+        density=fluid_data.get("density", 1.0),
+        mu=mu,
+        k_cond=k_cond,
+        is_coolprop=False,
+    )
 
 
-def fluid_report_data(label, fluid_data, fluid_obj):
+def compute_desktop_calculation(snapshot):
+    logger.info(
+        "Calculation requested. hot=%s cold=%s u_mode=%s solver=%s",
+        snapshot["hot_selection"],
+        snapshot["cold_selection"],
+        snapshot["u_mode"],
+        snapshot["method"],
+    )
+    T_hot = to_celsius(snapshot["T_hot_raw"], snapshot["T_hot_unit"])
+    T_cold = to_celsius(snapshot["T_cold_raw"], snapshot["T_cold_unit"])
+    if T_hot <= T_cold:
+        raise ValueError("Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır.")
+
+    hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot)
+    cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold)
+    hot_fluid = build_fluid_from_selection(
+        snapshot["hot_selection"], hot_data, snapshot["hot_mixture_data"],
+        snapshot["hot_mixture_basis"], T_hot, snapshot["mu_hot"], snapshot["k_hot"]
+    )
+    cold_fluid = build_fluid_from_selection(
+        snapshot["cold_selection"], cold_data, snapshot["cold_mixture_data"],
+        snapshot["cold_mixture_basis"], T_cold, snapshot["mu_cold"], snapshot["k_cold"]
+    )
+
+    m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
+    m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
+    hx = FinTubeHeatExchanger(hot_fluid, cold_fluid, U=1.0, A=1.0, flow_type=snapshot["flow_type"])
+
+    geo_res = None
+    geom = {}
+    if "Geometrik" in snapshot["u_mode"]:
+        geom = dict(snapshot["geom"])
+        if geom["D_i"] >= geom["D_o"]:
+            raise ValueError("Boru dış çapı iç çapından büyük olmalıdır.")
+        if geom["L"] <= 0 or geom["N_tubes"] < 1:
+            raise ValueError("Geometrik uzunluk ve adet sıfırdan büyük olmalıdır.")
+        geo_res = hx.calculate_geometric_U(geom, m_hot, m_cold, snapshot["hot_is_tube"])
+        hx.U = geo_res["U"]
+        hx.A = geo_res["A_total"]
+    else:
+        hx.U = snapshot["U"]
+        hx.A = snapshot["A"]
+
+    res_custom = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="custom")
+    res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot, T_cold)
+    res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="ht")
+    res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source="ht")
+    crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+    pychemengg_warning = None
+    try:
+        crosscheck_results.append(hx.solve_pychemengg_ntu(m_hot, m_cold, T_hot, T_cold))
+    except ImportError as exc:
+        pychemengg_warning = str(exc)
+    except Exception as exc:
+        pychemengg_warning = f"PyChemEngg doğrulaması çalışmadı: {exc}"
+
+    method = snapshot["method"]
+    res_main = res_custom
+    if method == "Kendi Algoritmamız (LMTD)":
+        res_main = res_custom_lmtd
+    elif method == "HT Kütüphanesi (Epsilon-NTU)":
+        res_main = res_ht
+    elif method == "HT Kütüphanesi (LMTD)":
+        res_main = res_lmtd
+
+    is_rating = "Performans" in snapshot["purpose"]
+    t_out_h = to_celsius(snapshot["T_hot_out_raw"], snapshot["T_hot_out_unit"]) if is_rating else -999.0
+    t_out_c = to_celsius(snapshot["T_cold_out_raw"], snapshot["T_cold_out_unit"]) if is_rating else -999.0
+    res_act = None
+    if is_rating and t_out_h > -900.0 and t_out_c > -900.0:
+        res_act = hx.calculate_actual_performance(m_hot, m_cold, T_hot, T_cold, t_out_h, t_out_c)
+
+    report_context = {
+        "methods": {
+            "Hesap amacı": snapshot["purpose"],
+            "Akış tipi": snapshot["flow_label"],
+            "Akış tipi internal": snapshot["flow_type"],
+            "Ana çözücü": method,
+            "U modu": snapshot["u_mode"],
+        },
+        "inputs": {
+            "m_hot_raw": f"{snapshot['m_hot_raw']} {snapshot['m_hot_unit']}",
+            "m_cold_raw": f"{snapshot['m_cold_raw']} {snapshot['m_cold_unit']}",
+            "m_hot_kg_s": m_hot,
+            "m_cold_kg_s": m_cold,
+            "T_hot_in_C": T_hot,
+            "T_cold_in_C": T_cold,
+            "T_hot_out_C": t_out_h if is_rating else None,
+            "T_cold_out_C": t_out_c if is_rating else None,
+            "U": hx.U,
+            "A": hx.A,
+        },
+        "fluids": {
+            "hot": fluid_report_data(snapshot["hot_selection"], hot_data, hx.hot_fluid),
+            "cold": fluid_report_data(snapshot["cold_selection"], cold_data, hx.cold_fluid),
+        },
+        "geometry": geom,
+        "geo_result": geo_res,
+        "results": {"main": res_main},
+        "actual_result": res_act,
+        "crosscheck_results": crosscheck_results,
+    }
     return {
-        "label": label,
-        "name": fluid_obj.name,
-        "source": fluid_data.get("property_source") or getattr(fluid_obj, "property_source", None) or ("CoolProp" if fluid_obj.is_coolprop else "Manual/Correlation"),
-        "cp": fluid_obj.cp,
-        "density": fluid_obj.density,
-        "mu": fluid_obj.mu,
-        "k_cond": fluid_obj.k_cond,
+        "hx": hx,
+        "geo_res": geo_res,
+        "res_main": res_main,
+        "res_act": res_act,
+        "crosscheck_results": crosscheck_results,
+        "pychemengg_warning": pychemengg_warning,
+        "report_context": report_context,
+        "is_rating": is_rating,
+        "t_out_h": t_out_h,
+        "t_out_c": t_out_c,
     }
 
 class CompositionDialog(QDialog):
@@ -202,6 +356,9 @@ FLOW_LABEL_TO_INTERNAL = {
     "Ters Akış (Counter Flow)": "counter",
     "Paralel Akış (Parallel Flow)": "parallel",
 }
+FLOW_LABEL_TO_INTERNAL["Çapraz Akış (Mixed/Unmixed)"] = "cross_mixed_unmixed"
+FLOW_INTERNAL_TO_LABEL = {value: key for key, value in FLOW_LABEL_TO_INTERNAL.items()}
+
 LOAD_KEY_ALIASES = {
     "calc_purpose": "purpose",
     "u_calc_mode": "u_mode",
@@ -304,7 +461,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         group_config = QGroupBox("⚙️ Ayarlar")
         form_config = QFormLayout(group_config)
         self.combo_flow = QComboBox()
-        self.combo_flow.addItems(['cross_unmixed', 'counter', 'parallel'])
+        self.combo_flow.addItems(list(FLOW_LABEL_TO_INTERNAL.keys()))
         
         self.combo_method = QComboBox()
         self.combo_method.addItems(['Kendi Algoritmamız (Epsilon-NTU)', 'Kendi Algoritmamız (LMTD)', 'HT Kütüphanesi (Epsilon-NTU)', 'HT Kütüphanesi (LMTD)'])
@@ -432,6 +589,9 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.spin_di = QDoubleSpinBox(); self.spin_di.setRange(1, 1000); self.spin_di.setValue(21.1); self.spin_di.setSuffix(" mm")
         self.spin_l = QDoubleSpinBox(); self.spin_l.setRange(0.1, 100); self.spin_l.setValue(3.0); self.spin_l.setSuffix(" m")
         self.spin_nt = QDoubleSpinBox(); self.spin_nt.setRange(1, 10000); self.spin_nt.setValue(100); self.spin_nt.setDecimals(0)
+        self.spin_d_shell = QDoubleSpinBox(); self.spin_d_shell.setRange(1, 5000); self.spin_d_shell.setValue(50.0); self.spin_d_shell.setSuffix(" mm")
+        self.spin_rf_i = QDoubleSpinBox(); self.spin_rf_i.setRange(0, 1); self.spin_rf_i.setDecimals(6); self.spin_rf_i.setValue(0.0); self.spin_rf_i.setSuffix(" m2K/W")
+        self.spin_rf_o = QDoubleSpinBox(); self.spin_rf_o.setRange(0, 1); self.spin_rf_o.setDecimals(6); self.spin_rf_o.setValue(0.0); self.spin_rf_o.setSuffix(" m2K/W")
         
         self.combo_tube_mat = QComboBox()
         self.tube_mats = {"Karbon Çelik": 45.0, "Paslanmaz Çelik 316": 16.0, "Bakır": 400.0, "Alüminyum": 237.0}
@@ -447,11 +607,17 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.spin_fin_dens = QDoubleSpinBox(); self.spin_fin_dens.setRange(1, 10000); self.spin_fin_dens.setValue(400); self.spin_fin_dens.setSuffix(" (1/m)"); self.spin_fin_dens.setDecimals(0)
         self.combo_fin_mat = QComboBox()
         self.combo_fin_mat.addItems(["Alüminyum (k=237)", "Karbon Çelik (k=45)"])
+        self.combo_fin_type = QComboBox()
+        self.combo_fin_type.addItems(["Dairesel (Annular)", "Düz (Rectangular)"])
+        self.chk_finned.toggled.connect(self.toggle_finned)
         
         form_geo.addRow("Dış Çap (Do):", self.spin_do)
         form_geo.addRow("İç Çap (Di):", self.spin_di)
         form_geo.addRow("Boru Uzunluğu:", self.spin_l)
         form_geo.addRow("Boru Sayısı:", self.spin_nt)
+        form_geo.addRow("Gövde İç Çapı:", self.spin_d_shell)
+        form_geo.addRow("Fouling İç:", self.spin_rf_i)
+        form_geo.addRow("Fouling Dış:", self.spin_rf_o)
         form_geo.addRow("Boru Malzemesi:", self.combo_tube_mat)
         form_geo.addRow("İç Boruda:", self.combo_hot_tube)
         form_geo.addRow("Kanatçık?:", self.chk_finned)
@@ -459,6 +625,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         form_geo.addRow(" Fin Kalınlığı:", self.spin_fin_t)
         form_geo.addRow(" Fin Yoğunluğu:", self.spin_fin_dens)
         form_geo.addRow(" Fin Malzemesi:", self.combo_fin_mat)
+        form_geo.addRow(" Fin Tipi:", self.combo_fin_type)
         
         self.stack_geom.addWidget(page_geo)
         
@@ -471,6 +638,11 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.btn_calc.setStyleSheet("background-color: #2e86c1; color: white; font-weight: bold; font-size: 14px;")
         self.btn_calc.clicked.connect(self.calculate)
         left_layout.addWidget(self.btn_calc)
+        self.progress_calc = QProgressBar()
+        self.progress_calc.setRange(0, 0)
+        self.progress_calc.hide()
+        left_layout.addWidget(self.progress_calc)
+        self.toggle_finned(self.chk_finned.isChecked())
         
         left_layout.addStretch()
         main_layout.addWidget(left_panel)
@@ -509,6 +681,9 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.figure = plt.figure(figsize=(6, 4))
         self.canvas = FigureCanvas(self.figure)
         res_layout.addWidget(self.canvas)
+        self.figure_profile = plt.figure(figsize=(6, 3))
+        self.canvas_profile = FigureCanvas(self.figure_profile)
+        res_layout.addWidget(self.canvas_profile)
             
         # Sekme 2: Doğrulama
         self.tab_cc = QWidget()
@@ -569,11 +744,25 @@ class HeatExchangerDesktopApp(QMainWindow):
             return
             
         options = QFileDialog.Options()
-        fileName, _ = QFileDialog.getSaveFileName(self, "Raporu Kaydet", "isi_degistirici_raporu.txt", "Text Files (*.txt);;All Files (*)", options=options)
+        fileName, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Raporu Kaydet",
+            "isi_degistirici_raporu.pdf",
+            "PDF Files (*.pdf);;Text Files (*.txt);;All Files (*)",
+            options=options,
+        )
         if fileName:
             try:
-                with open(fileName, 'w', encoding='utf-8') as f:
-                    f.write(build_calculation_report(self.last_report_context))
+                if selected_filter.startswith("PDF") or fileName.lower().endswith(".pdf"):
+                    if not fileName.lower().endswith(".pdf"):
+                        fileName += ".pdf"
+                    with open(fileName, "wb") as f:
+                        f.write(build_calculation_report_pdf(self.last_report_context))
+                else:
+                    if not fileName.lower().endswith(".txt"):
+                        fileName += ".txt"
+                    with open(fileName, 'w', encoding='utf-8') as f:
+                        f.write(build_calculation_report(self.last_report_context))
                         
                 QMessageBox.information(self, "Başarılı", "Rapor başarıyla kaydedildi!")
             except Exception as e:
@@ -597,7 +786,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         selected_level = level_map.get(self.combo_log_level.currentText(), logging.INFO)
         
         filtered_msgs = [msg for msg, levelno in self.all_logs if levelno >= selected_level]
-        self.text_log.setPlainText("\\n".join(filtered_msgs))
+        self.text_log.setPlainText("\n".join(filtered_msgs))
         
         # Sona kaydır
         scrollbar = self.text_log.verticalScrollBar()
@@ -607,23 +796,44 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.check_for_updates(show_no_update=False)
 
     def check_for_updates(self, show_no_update=False):
-        result = check_for_update()
+        if getattr(self, "update_check_thread", None) is not None:
+            return
+        self.append_log("G?ncelleme kontrol? ba?lat?ld?...", logging.INFO)
+        self.update_check_thread = QThread(self)
+        self.update_check_worker = UpdateCheckWorker(show_no_update)
+        self.update_check_worker.moveToThread(self.update_check_thread)
+        self.update_check_thread.started.connect(self.update_check_worker.run)
+        self.update_check_worker.finished.connect(self.on_update_check_finished)
+        self.update_check_worker.finished.connect(self.update_check_thread.quit)
+        self.update_check_worker.finished.connect(self.update_check_worker.deleteLater)
+        self.update_check_thread.finished.connect(self.update_check_thread.deleteLater)
+        self.update_check_thread.finished.connect(self.on_update_check_thread_done)
+        self.update_check_thread.start()
+
+    def on_update_check_thread_done(self):
+        self.update_check_thread = None
+        self.update_check_worker = None
+
+    def on_update_check_finished(self, result, show_no_update):
         self.latest_update_info = result
         self.append_log(result.get("message", ""), logging.INFO if result.get("ok") else logging.WARNING)
         if result.get("update_available"):
             reply = QMessageBox.information(
                 self,
-                "Güncelleme Bulundu",
-                f"{result['message']}\nMevcut sürüm: v{VERSION}\nGüncelleme paketi indirilsin mi?",
+                "G?ncelleme Bulundu",
+                f"{result['message']}\nMevcut s?r?m: v{VERSION}\nG?ncelleme paketi indirilsin mi?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
                 self.download_update(result)
         elif show_no_update:
-            QMessageBox.information(self, "Güncelleme Kontrolü", result.get("message", "Güncelleme bulunamadı."))
+            QMessageBox.information(self, "G?ncelleme Kontrol?", result.get("message", "G?ncelleme bulunamad?."))
 
     def download_update(self, update_info=None):
         update_info = update_info or self.latest_update_info
+        if getattr(self, "update_thread", None) is not None:
+            QMessageBox.information(self, "Güncelleme", "Bir güncelleme indirme işlemi zaten devam ediyor.")
+            return
         if not update_info or not update_info.get("update_available"):
             QMessageBox.information(self, "Güncelleme", "İndirilecek yeni sürüm bulunamadı.")
             return
@@ -635,20 +845,39 @@ class HeatExchangerDesktopApp(QMainWindow):
         if not target_dir:
             logger.info("Update download cancelled by user.")
             return
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            logger.info("Downloading update to %s", target_dir)
-            result = download_release_asset(update_info, target_dir, app_kind="desktop", timeout=120)
-            logger.info("Update downloaded: %s (%s bytes)", result["path"], result["size"])
-            QMessageBox.information(
-                self,
-                "Güncelleme İndirildi",
-                f"Güncelleme paketi indirildi:\n{result['path']}\n\nProgramı kapatıp zip içindeki yeni sürümü kullanabilirsiniz.",
-            )
-        except Exception as exc:
-            self.show_error("Güncelleme İndirme Hatası", str(exc), exc)
-        finally:
-            QApplication.restoreOverrideCursor()
+
+        logger.info("Starting update download to %s", target_dir)
+        self.append_log(f"Güncelleme indiriliyor: {target_dir}", logging.INFO)
+        self.progress_calc.show()
+        self.update_thread = QThread(self)
+        self.update_worker = UpdateDownloadWorker(update_info, target_dir)
+        self.update_worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(self.update_worker.run)
+        self.update_worker.finished.connect(self.on_update_download_finished)
+        self.update_worker.failed.connect(self.on_update_download_failed)
+        self.update_worker.finished.connect(self.update_thread.quit)
+        self.update_worker.failed.connect(self.update_thread.quit)
+        self.update_worker.finished.connect(self.update_worker.deleteLater)
+        self.update_worker.failed.connect(self.update_worker.deleteLater)
+        self.update_thread.finished.connect(self.update_thread.deleteLater)
+        self.update_thread.finished.connect(self.on_update_download_thread_done)
+        self.update_thread.start()
+
+    def on_update_download_thread_done(self):
+        self.progress_calc.hide()
+        self.update_thread = None
+        self.update_worker = None
+
+    def on_update_download_failed(self, title, message, exc):
+        self.show_error(title, message, exc)
+
+    def on_update_download_finished(self, result):
+        logger.info("Update downloaded: %s (%s bytes)", result["path"], result["size"])
+        QMessageBox.information(
+            self,
+            "Güncelleme İndirildi",
+            f"Güncelleme paketi indirildi:\n{result['path']}\n\nProgramı kapatıp zip içindeki yeni sürümü kullanabilirsiniz.",
+        )
 
     def toggle_hot_fluid(self, text):
         is_mixture = self.is_exhaust_mixture(text)
@@ -659,6 +888,10 @@ class HeatExchangerDesktopApp(QMainWindow):
         is_mixture = self.is_exhaust_mixture(text)
         self.btn_edit_comp_cold.setVisible(is_mixture)
         self.set_manual_property_controls("cold", self.is_custom_manual(text))
+
+    def toggle_finned(self, checked):
+        for widget in (self.spin_fin_h, self.spin_fin_t, self.spin_fin_dens, self.combo_fin_mat, self.combo_fin_type):
+            widget.setVisible(checked)
 
     def is_exhaust_mixture(self, text):
         data = get_fluid_data(text) or {}
@@ -717,7 +950,8 @@ class HeatExchangerDesktopApp(QMainWindow):
             data = {
                 "calc_purpose": self.combo_purpose.currentText(),
                 "purpose": self.combo_purpose.currentText(),
-                "flow_type": self.combo_flow.currentText(),
+                "flow_type": FLOW_LABEL_TO_INTERNAL.get(self.combo_flow.currentText(), self.combo_flow.currentText()),
+                "flow_label": self.combo_flow.currentText(),
                 "u_calc_mode": self.combo_u_mode.currentText(),
                 "solver_method": self.combo_method.currentText(),
                 "u_mode": self.combo_u_mode.currentText(),
@@ -751,6 +985,9 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "L": self.spin_l.value(),
                 "N_tubes": self.spin_nt.value(),
                 "Nt": self.spin_nt.value(),
+                "D_shell_mm": self.spin_d_shell.value(),
+                "R_f_i": self.spin_rf_i.value(),
+                "R_f_o": self.spin_rf_o.value(),
                 "tube_mat": self.combo_tube_mat.currentText(),
                 "hot_tube": self.combo_hot_tube.currentText(),
                 "cp_hot": get_fluid_data(self.combo_hot.currentText()).get("cp", 1100.0),
@@ -765,7 +1002,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_h": self.spin_fin_h.value(),
                 "fin_t": self.spin_fin_t.value(),
                 "fin_dens": self.spin_fin_dens.value(),
-                "fin_mat": self.combo_fin_mat.currentText()
+                "fin_mat": self.combo_fin_mat.currentText(),
+                "fin_type": self.combo_fin_type.currentText()
             }
             with open(fileName, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -780,7 +1018,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 with open(fileName, 'r', encoding='utf-8') as f:
                     data = normalize_loaded_data(json.load(f))
                 self.combo_purpose.setCurrentText(data.get("purpose", "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)"))
-                self.combo_flow.setCurrentText(data.get("flow_type", "cross_unmixed"))
+                flow_value = data.get("flow_type", "cross_unmixed")
+                self.combo_flow.setCurrentText(FLOW_INTERNAL_TO_LABEL.get(flow_value, flow_value))
                 self.combo_method.setCurrentText(data.get("solver_method", "Kendi Algoritmamız (Epsilon-NTU)"))
                 self.combo_u_mode.setCurrentText(data.get("u_mode", "Basit Mod"))
                 self.combo_hot.setCurrentText(data.get("hot_fluid", "Therminol 66"))
@@ -808,6 +1047,9 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_di.setValue(data.get("Di", 21.1))
                 self.spin_l.setValue(data.get("L", 3.0))
                 self.spin_nt.setValue(data.get("Nt", 100))
+                self.spin_d_shell.setValue(data.get("D_shell_mm", 50.0))
+                self.spin_rf_i.setValue(data.get("R_f_i", 0.0))
+                self.spin_rf_o.setValue(data.get("R_f_o", 0.0))
                 self.combo_tube_mat.setCurrentText(data.get("tube_mat", "Karbon Çelik"))
                 self.combo_hot_tube.setCurrentText(data.get("hot_tube", "Soğuk Akışkan"))
                 
@@ -816,6 +1058,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_fin_t.setValue(data.get("fin_t", 0.4))
                 self.spin_fin_dens.setValue(data.get("fin_dens", 400.0))
                 self.combo_fin_mat.setCurrentText(data.get("fin_mat", "Alüminyum (k=237)"))
+                self.combo_fin_type.setCurrentText(data.get("fin_type", "Dairesel (Annular)"))
+                self.toggle_finned(self.chk_finned.isChecked())
                 self.toggle_hot_fluid(self.combo_hot.currentText())
                 self.toggle_cold_fluid(self.combo_cold.currentText())
                 
@@ -824,258 +1068,166 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.show_error("Hata", f"Dosya yüklenirken hata oluştu: {str(e)}", e)
 
     def calculate(self):
-        logger.info(
-            "Calculation requested. hot=%s cold=%s u_mode=%s solver=%s",
-            self.combo_hot.currentText(),
-            self.combo_cold.currentText(),
-            self.combo_u_mode.currentText(),
-            self.combo_method.currentText(),
-        )
-        T_hot = to_celsius(self.spin_t_hot.value(), self.combo_u_t_hot.currentText())
-        T_cold = to_celsius(self.spin_t_cold.value(), self.combo_u_t_cold.currentText())
-        m_hot_raw = self.spin_m_hot.value()
-        m_cold_raw = self.spin_m_cold.value()
-        
-        if T_hot <= T_cold:
-            QMessageBox.critical(self, "Hata", "Sıcak akışkanın giriş sıcaklığı, soğuk akışkanın giriş sıcaklığından BÜYÜK olmalıdır!")
+        if not self.btn_calc.isEnabled():
             return
-            
         try:
-            hot_data = materialize_fluid_data(get_fluid_data(self.combo_hot.currentText()), T_hot)
-            cold_data = materialize_fluid_data(get_fluid_data(self.combo_cold.currentText()), T_cold)
-        except Exception as e:
-            self.show_error("Akışkan Hatası", str(e), e)
+            snapshot = self.create_calculation_snapshot()
+        except Exception as exc:
+            self.show_error("Girdi Hatası", str(exc), exc)
             return
-        
-        try:
-            if hot_data["is_coolprop"]:
-                hot_fluid = Fluid(name=hot_data["name"], is_coolprop=True, calc_temp_c=T_hot)
-            elif hot_data.get("is_mixture"):
-                logger.info("Calculating hot exhaust mixture properties. basis=%s comp=%s", self.hot_mixture_basis, self.hot_mixture_data)
-                hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type=self.hot_mixture_basis, T_c=T_hot, P_pa=101325.0)
-                hot_fluid = Fluid(name="Özel Egzoz Gazı", cp=hot_mix['cp'], density=hot_mix['density'], mu=hot_mix['mu'], k_cond=hot_mix['k_cond'], is_coolprop=False)
-            else:
-                hot_fluid = Fluid(
-                    name=hot_data["name"],
-                    cp=hot_data.get("cp", 1100.0),
-                    density=hot_data.get("density", 0.5),
-                    mu=self.spin_mu_hot.value(),
-                    k_cond=self.spin_k_hot.value(),
-                    is_coolprop=False,
-                )
-                
-            if cold_data["is_coolprop"]:
-                cold_fluid = Fluid(name=cold_data["name"], is_coolprop=True, calc_temp_c=T_cold)
-            elif cold_data.get("is_mixture"):
-                logger.info("Calculating cold exhaust mixture properties. basis=%s comp=%s", self.cold_mixture_basis, self.cold_mixture_data)
-                cold_mix = get_mixture_fluid_data(self.cold_mixture_data, comp_type=self.cold_mixture_basis, T_c=T_cold, P_pa=101325.0)
-                cold_fluid = Fluid(name="Özel Egzoz Gazı", cp=cold_mix['cp'], density=cold_mix['density'], mu=cold_mix['mu'], k_cond=cold_mix['k_cond'], is_coolprop=False)
-            else:
-                cold_fluid = Fluid(
-                    name=cold_data["name"],
-                    cp=cold_data.get("cp", 2000.0),
-                    density=cold_data.get("density", 850.0),
-                    mu=self.spin_mu_cold.value(),
-                    k_cond=self.spin_k_cold.value(),
-                    is_coolprop=False,
-                )
-        except Exception as e:
-            self.show_error("Akışkan Hatası", str(e), e)
-            return
-            
-        m_hot = to_kg_s(m_hot_raw, self.combo_u_m_hot.currentText(), hot_fluid.density)
-        m_cold = to_kg_s(m_cold_raw, self.combo_u_m_cold.currentText(), cold_fluid.density)
-        flow_t = self.combo_flow.currentText()
-        
-        hx = FinTubeHeatExchanger(hot_fluid, cold_fluid, U=1.0, A=1.0, flow_type=flow_t)
-        
-        is_rating = "Performans" in self.combo_purpose.currentText()
-        
-        if "Geometrik" in self.combo_u_mode.currentText():
-            geom = {
-                'D_o': self.spin_do.value() / 1000.0,
-                'D_i': self.spin_di.value() / 1000.0,
-                'L': self.spin_l.value(),
-                'N_tubes': self.spin_nt.value(),
-                'k_wall': self.tube_mats[self.combo_tube_mat.currentText()],
-                'is_finned': self.chk_finned.isChecked(),
-                'fin_height': self.spin_fin_h.value() / 1000.0,
-                'fin_thickness': self.spin_fin_t.value() / 1000.0,
-                'fin_density': self.spin_fin_dens.value(),
-                'k_fin': 237.0 if "Alüminyum" in self.combo_fin_mat.currentText() else 45.0,
-                'pitch': self.spin_do.value() * 2 / 1000.0,
-                'D_shell': self.spin_do.value() * 1.5 / 1000.0
-            }
-            hot_is_tube = True if self.combo_hot_tube.currentText() == "Sıcak Akışkan" else False
-            
-            try:
-                # Akışkan özelliklerini Fluids DB'den veya arayüzden al
-                hot_name = self.combo_hot.currentText()
-                cold_name = self.combo_cold.currentText()
-                hot_data = materialize_fluid_data(get_fluid_data(hot_name), T_hot)
-                cold_data = materialize_fluid_data(get_fluid_data(cold_name), T_cold)
-                
-                if hot_data and hot_data.get('is_mixture'):
-                    hot_mix = get_mixture_fluid_data(self.hot_mixture_data, comp_type=self.hot_mixture_basis, T_c=T_hot, P_pa=101325.0)
-                    hx.hot_fluid = Fluid(name="Özel Egzoz Gazı", is_coolprop=False, cp=hot_mix['cp'], density=hot_mix['density'], mu=hot_mix['mu'], k_cond=hot_mix['k_cond'])
-                elif hot_data and not hot_data.get('is_coolprop'):
-                    hx.hot_fluid = Fluid(name=hot_name, is_coolprop=False, cp=hot_data.get('cp', 1000.0), density=hot_data.get('density', 1.0), mu=self.spin_mu_hot.value(), k_cond=self.spin_k_hot.value())
-                else:
-                    hx.hot_fluid = Fluid(name=hot_data['name'] if hot_data else hot_name, is_coolprop=True, calc_temp_c=T_hot)
+        self.btn_calc.setEnabled(False)
+        self.progress_calc.show()
+        self.calc_thread = QThread(self)
+        self.calc_worker = CalculationWorker(snapshot)
+        self.calc_worker.moveToThread(self.calc_thread)
+        self.calc_thread.started.connect(self.calc_worker.run)
+        self.calc_worker.finished.connect(self.on_calculation_finished)
+        self.calc_worker.failed.connect(self.on_calculation_failed)
+        self.calc_worker.finished.connect(self.calc_thread.quit)
+        self.calc_worker.failed.connect(self.calc_thread.quit)
+        self.calc_worker.finished.connect(self.calc_worker.deleteLater)
+        self.calc_worker.failed.connect(self.calc_worker.deleteLater)
+        self.calc_thread.finished.connect(self.calc_thread.deleteLater)
+        self.calc_thread.finished.connect(self.on_calculation_thread_done)
+        self.calc_thread.start()
 
-                if cold_data and cold_data.get('is_mixture'):
-                    cold_mix = get_mixture_fluid_data(self.cold_mixture_data, comp_type=self.cold_mixture_basis, T_c=T_cold, P_pa=101325.0)
-                    hx.cold_fluid = Fluid(name="Özel Egzoz Gazı", is_coolprop=False, cp=cold_mix['cp'], density=cold_mix['density'], mu=cold_mix['mu'], k_cond=cold_mix['k_cond'])
-                elif cold_data and not cold_data.get('is_coolprop'):
-                    hx.cold_fluid = Fluid(name=cold_name, is_coolprop=False, cp=cold_data.get('cp', 1000.0), density=cold_data.get('density', 1.0), mu=self.spin_mu_cold.value(), k_cond=self.spin_k_cold.value())
-                else:
-                    hx.cold_fluid = Fluid(name=cold_data['name'] if cold_data else cold_name, is_coolprop=True, calc_temp_c=T_cold)
+    def create_calculation_snapshot(self):
+        flow_label = self.combo_flow.currentText()
+        flow_type = FLOW_LABEL_TO_INTERNAL.get(flow_label, flow_label)
+        return {
+            "purpose": self.combo_purpose.currentText(),
+            "flow_label": flow_label,
+            "flow_type": flow_type,
+            "method": self.combo_method.currentText(),
+            "u_mode": self.combo_u_mode.currentText(),
+            "hot_selection": self.combo_hot.currentText(),
+            "cold_selection": self.combo_cold.currentText(),
+            "hot_mixture_data": dict(self.hot_mixture_data),
+            "hot_mixture_basis": self.hot_mixture_basis,
+            "cold_mixture_data": dict(self.cold_mixture_data),
+            "cold_mixture_basis": self.cold_mixture_basis,
+            "m_hot_raw": self.spin_m_hot.value(),
+            "m_cold_raw": self.spin_m_cold.value(),
+            "m_hot_unit": self.combo_u_m_hot.currentText(),
+            "m_cold_unit": self.combo_u_m_cold.currentText(),
+            "T_hot_raw": self.spin_t_hot.value(),
+            "T_cold_raw": self.spin_t_cold.value(),
+            "T_hot_unit": self.combo_u_t_hot.currentText(),
+            "T_cold_unit": self.combo_u_t_cold.currentText(),
+            "T_hot_out_raw": self.spin_t_hot_out.value(),
+            "T_cold_out_raw": self.spin_t_cold_out.value(),
+            "T_hot_out_unit": self.combo_u_t_hot_out.currentText(),
+            "T_cold_out_unit": self.combo_u_t_cold_out.currentText(),
+            "mu_hot": self.spin_mu_hot.value(),
+            "k_hot": self.spin_k_hot.value(),
+            "mu_cold": self.spin_mu_cold.value(),
+            "k_cold": self.spin_k_cold.value(),
+            "U": self.spin_U.value(),
+            "A": self.spin_A.value(),
+            "hot_is_tube": self.combo_hot_tube.currentText() == "Sıcak Akışkan",
+            "geom": {
+                "D_o": self.spin_do.value() / 1000.0,
+                "D_i": self.spin_di.value() / 1000.0,
+                "L": self.spin_l.value(),
+                "N_tubes": self.spin_nt.value(),
+                "k_wall": self.tube_mats[self.combo_tube_mat.currentText()],
+                "is_finned": self.chk_finned.isChecked(),
+                "fin_height": self.spin_fin_h.value() / 1000.0,
+                "fin_thickness": self.spin_fin_t.value() / 1000.0,
+                "fin_density": self.spin_fin_dens.value(),
+                "k_fin": 237.0 if "Alüminyum" in self.combo_fin_mat.currentText() else 45.0,
+                "fin_type": "rectangular" if "Rectangular" in self.combo_fin_type.currentText() else "annular",
+                "pitch": self.spin_do.value() * 2 / 1000.0,
+                "D_shell": self.spin_d_shell.value() / 1000.0,
+                "R_f_i": self.spin_rf_i.value(),
+                "R_f_o": self.spin_rf_o.value(),
+            },
+        }
 
-                if geom['D_i'] >= geom['D_o']:
-                    QMessageBox.warning(self, "Mantıksal Hata", "Boru dış çapı, iç çapından büyük olmalıdır!")
-                    return
-                if geom['L'] <= 0 or geom['N_tubes'] < 1:
-                    QMessageBox.warning(self, "Mantıksal Hata", "Geometrik uzunluk ve adet sıfırdan büyük olmalıdır!")
-                    return
-                
-                geo_res = hx.calculate_geometric_U(geom, m_hot, m_cold, hot_is_tube)
-                self.last_geo_res = geo_res
-                hx.U = geo_res['U']
-                hx.A = geo_res['A_total']
-                geo_warnings = "\n".join(geo_res.get('warnings', []))
-                self.lbl_geo_res.setText(
-                    f"📐 Geometrik Mod: U={hx.U:.2f} W/m²K, A={hx.A:.2f} m²\n"
-                    f"h_i={geo_res['h_i']:.1f}, h_o={geo_res['h_o']:.1f}"
-                    + (f"\n{geo_warnings}" if geo_warnings else "")
-                )
-            except Exception as e:
-                self.show_error("Geometrik Hata", f"Geometrik U hesaplanamadı: {str(e)}\nAkışkan özellikleri eksik olabilir.", e)
-                return
+    def on_calculation_thread_done(self):
+        self.progress_calc.hide()
+        self.btn_calc.setEnabled(True)
+        self.calc_thread = None
+        self.calc_worker = None
+
+    def on_calculation_failed(self, title, message, exc):
+        self.show_error(title, message, exc)
+
+    def on_calculation_finished(self, payload):
+        self.apply_calculation_result(payload)
+
+    def apply_calculation_result(self, payload):
+        hx = payload["hx"]
+        geo_res = payload["geo_res"]
+        res_main = payload["res_main"]
+        res_act = payload["res_act"]
+        crosscheck_results = payload["crosscheck_results"]
+        pychemengg_warning = payload["pychemengg_warning"]
+        is_rating = payload["is_rating"]
+        t_out_h = payload["t_out_h"]
+        t_out_c = payload["t_out_c"]
+
+        self.last_geo_res = geo_res
+        self.last_res_main = res_main
+        self.last_res_act = res_act
+        self.last_crosscheck_results = crosscheck_results
+        self.last_report_context = payload["report_context"]
+        self.btn_export_report.show()
+
+        if geo_res:
+            geo_warnings = "\n".join(geo_res.get("warnings", []))
+            self.lbl_geo_res.setText(
+                f"📐 Geometrik Mod: U={hx.U:.2f} W/m²K, A={hx.A:.2f} m²\n"
+                f"h_i={geo_res['h_i']:.1f}, h_o={geo_res['h_o']:.1f}"
+                + (f"\n{geo_warnings}" if geo_warnings else "")
+            )
         else:
-            geom = {}
-            hx.U = self.spin_U.value()
-            hx.A = self.spin_A.value()
-            self.last_geo_res = None
             self.lbl_geo_res.setText("")
 
-        sel_method = self.combo_method.currentText()
-        is_rating = "Performans" in self.combo_purpose.currentText()
-        
-        t_out_h = -999.0
-        t_out_c = -999.0
-        if is_rating:
-            t_out_h = to_celsius(self.spin_t_hot_out.value(), self.combo_u_t_hot_out.currentText())
-            t_out_c = to_celsius(self.spin_t_cold_out.value(), self.combo_u_t_cold_out.currentText())
-            
-        try:
-            res_custom = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source='custom')
-            res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot, T_cold)
-            res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source='ht')
-            res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source='ht')
-            crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
-            pychemengg_warning = None
-            try:
-                crosscheck_results.append(hx.solve_pychemengg_ntu(m_hot, m_cold, T_hot, T_cold))
-            except ImportError as e:
-                pychemengg_warning = str(e)
-            except Exception as e:
-                pychemengg_warning = f"PyChemEngg doğrulaması çalışmadı: {e}"
-        except Exception as e:
-            self.show_error("Hesaplama Hatası", str(e), e)
-            return
-        
-        # Seçili olan ana metodu belirle
-        res_main = res_custom
-        sel_method = self.combo_method.currentText()
-        if sel_method == 'Kendi Algoritmamız (LMTD)':
-            res_main = res_custom_lmtd
-        elif sel_method == 'HT Kütüphanesi (Epsilon-NTU)':
-            res_main = res_ht
-        elif sel_method == 'HT Kütüphanesi (LMTD)':
-            res_main = res_lmtd
-            
-        self.last_res_main = res_main
-        self.last_res_act = None
-        self.last_crosscheck_results = crosscheck_results
-        self.btn_export_report.show()
-        
-        t_out_h = to_celsius(self.spin_t_hot_out.value(), self.combo_u_t_hot_out.currentText()) if is_rating else -999.0
-        t_out_c = to_celsius(self.spin_t_cold_out.value(), self.combo_u_t_cold_out.currentText()) if is_rating else -999.0
-        
-        if is_rating and t_out_h > -900.0 and t_out_c > -900.0:
-            res_act = hx.calculate_actual_performance(m_hot, m_cold, T_hot, T_cold, t_out_h, t_out_c)
-            self.last_res_act = res_act
-            
+        if is_rating and res_act:
             self.lbl_res_q.setText(f"Gerçekleşen Transfer Edilen Isı (Q_ortalama): {res_act['Q_avg [W]']/1000:.2f} kW")
             self.lbl_res_th.setText(f"Ölçülen Sıcak Çıkış: {t_out_h:.2f} °C  (Tasarım Beklentisi: {res_main['T_hot_out [C]']:.2f} °C)")
             self.lbl_res_tc.setText(f"Ölçülen Soğuk Çıkış: {t_out_c:.2f} °C  (Tasarım Beklentisi: {res_main['T_cold_out [C]']:.2f} °C)")
             self.lbl_res_eff.setText(f"Gerçekleşen Verim (ε): % {res_act['epsilon_actual']*100:.2f}  (Tasarım Verimi: % {res_main.get('epsilon', 0.0)*100:.2f})")
-            
-            enerji_farki = abs(res_act['Q_hot [W]'] - res_act['Q_cold [W]']) / max(res_act['Q_hot [W]'], 1) * 100
-            warnings_text = "\n".join(res_act.get('warnings', []))
-            self.lbl_res_act.setText(f"⚠️ Enerji Dengesi Sapması: % {enerji_farki:.2f}\n"
-                                     f"Bu sıcaklıklara ulaşmak için Gereken U Katsayısı: {res_act['U_required']:.2f} W/m²K"
-                                     + (f"\n{warnings_text}" if warnings_text else ""))
+            enerji_farki = abs(res_act['Q_hot [W]'] - res_act['Q_cold [W]']) / max(abs(res_act['Q_hot [W]']), 1) * 100
+            warnings_text = "\n".join(res_act.get("warnings", []))
+            self.lbl_res_act.setText(
+                f"⚠️ Enerji Dengesi Sapması: % {enerji_farki:.2f}\n"
+                f"Bu sıcaklıklara ulaşmak için Gereken U Katsayısı: {res_act['U_required']:.2f} W/m²K"
+                + (f"\n{warnings_text}" if warnings_text else "")
+            )
         else:
             self.lbl_res_q.setText(f"Tasarım Isı Yükü (Q): {res_main['Q [W]']/1000:.2f} kW")
             self.lbl_res_th.setText(f"Hesaplanan Sıcak Akışkan Çıkışı: {res_main['T_hot_out [C]']:.2f} °C")
             self.lbl_res_tc.setText(f"Hesaplanan Soğuk Akışkan Çıkışı: {res_main['T_cold_out [C]']:.2f} °C")
             self.lbl_res_eff.setText(f"Sistem Tasarım Verimi (ε): % {res_main.get('epsilon', 0.0)*100:.2f}")
-            warnings_text = "\n".join(res_main.get('warnings', []))
-            self.lbl_res_act.setText(warnings_text)
-        
-        # Cross Check
+            self.lbl_res_act.setText("\n".join(res_main.get("warnings", [])))
+
         if pychemengg_warning:
             self.append_log(pychemengg_warning, logging.INFO)
             self.filter_and_display_last_log(pychemengg_warning, logging.INFO)
         self.table_cc.setRowCount(len(crosscheck_results))
-        for row, r in enumerate(crosscheck_results):
+        for row, result in enumerate(crosscheck_results):
             q_diff = ""
-            if res_main.get('Q [W]', 0) > 0:
-                q_diff = f"{abs(r['Q [W]'] - res_main['Q [W]']) / res_main['Q [W]'] * 100:.3f}"
-            self.table_cc.setItem(row, 0, QTableWidgetItem(r['Method']))
-            self.table_cc.setItem(row, 1, QTableWidgetItem(r['Source']))
-            self.table_cc.setItem(row, 2, QTableWidgetItem(r.get('status', 'ok')))
-            self.table_cc.setItem(row, 3, QTableWidgetItem(f"{r['Q [W]']/1000:.2f}"))
+            if res_main.get("Q [W]", 0) > 0:
+                q_diff = f"{abs(result['Q [W]'] - res_main['Q [W]']) / res_main['Q [W]'] * 100:.3f}"
+            self.table_cc.setItem(row, 0, QTableWidgetItem(result["Method"]))
+            self.table_cc.setItem(row, 1, QTableWidgetItem(result["Source"]))
+            self.table_cc.setItem(row, 2, QTableWidgetItem(result.get("status", "ok")))
+            self.table_cc.setItem(row, 3, QTableWidgetItem(f"{result['Q [W]']/1000:.2f}"))
             self.table_cc.setItem(row, 4, QTableWidgetItem(q_diff))
-            self.table_cc.setItem(row, 5, QTableWidgetItem(f"{r['T_hot_out [C]']:.2f}"))
-            self.table_cc.setItem(row, 6, QTableWidgetItem(f"{r['T_cold_out [C]']:.2f}"))
-            self.table_cc.setItem(row, 7, QTableWidgetItem(" | ".join(r.get('warnings', []))))
+            self.table_cc.setItem(row, 5, QTableWidgetItem(f"{result['T_hot_out [C]']:.2f}"))
+            self.table_cc.setItem(row, 6, QTableWidgetItem(f"{result['T_cold_out [C]']:.2f}"))
+            self.table_cc.setItem(row, 7, QTableWidgetItem(" | ".join(result.get("warnings", []))))
 
-        self.last_report_context = {
-            "methods": {
-                "Hesap amacı": self.combo_purpose.currentText(),
-                "Akış tipi": self.combo_flow.currentText(),
-                "Akış tipi internal": self.combo_flow.currentText(),
-                "Ana çözücü": self.combo_method.currentText(),
-                "U modu": self.combo_u_mode.currentText(),
-            },
-            "inputs": {
-                "m_hot_raw": f"{m_hot_raw} {self.combo_u_m_hot.currentText()}",
-                "m_cold_raw": f"{m_cold_raw} {self.combo_u_m_cold.currentText()}",
-                "m_hot_kg_s": m_hot,
-                "m_cold_kg_s": m_cold,
-                "T_hot_in_C": T_hot,
-                "T_cold_in_C": T_cold,
-                "T_hot_out_C": t_out_h if is_rating else None,
-                "T_cold_out_C": t_out_c if is_rating else None,
-                "U": hx.U,
-                "A": hx.A,
-            },
-            "fluids": {
-                "hot": fluid_report_data(self.combo_hot.currentText(), hot_data, hx.hot_fluid),
-                "cold": fluid_report_data(self.combo_cold.currentText(), cold_data, hx.cold_fluid),
-            },
-            "geometry": geom,
-            "geo_result": self.last_geo_res,
-            "results": {"main": res_main},
-            "actual_result": self.last_res_act,
-            "crosscheck_results": crosscheck_results,
-        }
-            
-        # Schematic
-        hx.plot_schematic(fig=self.figure)
+        hx.plot_enhanced_schematic(result=res_main, fig=self.figure)
         self.canvas.draw()
+        hx.plot_temperature_profile(res_main, fig=self.figure_profile)
+        self.canvas_profile.draw()
+
+    def _calculate_impl(self):
+        payload = compute_desktop_calculation(self.create_calculation_snapshot())
+        self.apply_calculation_result(payload)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

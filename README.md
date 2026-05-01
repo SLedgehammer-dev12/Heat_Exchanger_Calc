@@ -8,9 +8,11 @@ Fin-tube heat exchanger calculator with desktop and web interfaces.
 - Cross-check with `ht` and PyChemEngg
 - CoolProp and ChEDL (`fluids`, `thermo`, `ht`) property support
 - Manual and correlation based thermal oil data
-- Detailed engineering report export
+- Geometric U calculation with fouling resistance, Gnielinski internal-flow correlation, and selectable fin geometry
+- Temperature profile plot and schematic with inlet/outlet temperatures
+- Detailed engineering report export as TXT/PDF
 - Save/load input data as JSON
-- GitHub release update check
+- GitHub release update check and in-app package download
 
 ## Run from source
 
@@ -22,16 +24,20 @@ streamlit run app_web.py
 
 ## Windows build
 
-Desktop:
-
 ```powershell
-pyinstaller --noconfirm --clean --onedir --noupx --windowed --name HeatExchangerCalcDesktop --hidden-import scipy._cyutility --collect-data chemicals --collect-data thermo --collect-data fluids --add-data "data;data" app_desktop.py
+.\build_windows.ps1
 ```
 
-Web launcher:
+The build script adds the app icon, Windows version metadata, ChEDL/`ht` data files, and excludes common unused notebook/interactive modules to reduce package size.
+
+Before packaging, run:
 
 ```powershell
-pyinstaller --noconfirm --clean --onedir --noupx --console --name HeatExchangerCalcWeb --hidden-import scipy._cyutility --hidden-import app_web --hidden-import fluids_db --hidden-import heat_exchanger --hidden-import reporting --hidden-import updater --hidden-import version --hidden-import logging_config --collect-all streamlit --copy-metadata streamlit --collect-data chemicals --collect-data thermo --collect-data fluids --add-data "app_web.py;." --add-data "data;data" run_web.py
+python -m unittest discover -s . -p "test*.py" -v
 ```
 
-Unsigned executables may still trigger reputation warnings on locked-down Windows environments. For enterprise deployment, code-sign the final executables with a trusted certificate.
+Unsigned executables may still trigger reputation warnings on locked-down Windows environments. For enterprise deployment, code-sign the final executables with a trusted certificate:
+
+```powershell
+.\build_windows.ps1 -CertificateThumbprint "<certificate-thumbprint>"
+```

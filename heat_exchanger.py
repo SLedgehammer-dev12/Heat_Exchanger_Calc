@@ -1,10 +1,11 @@
 import numpy as np
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
-import matplotlib.patches as patches
 import ht
 
 try:
@@ -26,6 +27,7 @@ except ImportError:
     FLUIDS_AVAILABLE = False
 
 SUPPORTED_FLOW_TYPES = {'parallel', 'counter', 'cross_unmixed', 'cross_mixed_unmixed'}
+ENERGY_BALANCE_WARNING_FRACTION = 0.05
 CHEDL_NAME_MAP = {
     'Air': 'air',
     'CO2': 'CO2',
@@ -60,6 +62,23 @@ def _append_warning(result, message):
 def _append_unique(warnings, message):
     if message not in warnings:
         warnings.append(message)
+
+
+def _crossflow_lmtd_factor(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c):
+    """Approximate crossflow LMTD correction shared by local LMTD calculations."""
+    P = (T_cold_out - T_cold_in) / (T_hot_in - T_cold_in)
+    R = C_c / C_h
+    return max(0.1, min(1.0, 1.0 - (0.25 * P * R)))
+
+
+def _fin_efficiency(fin_type, h_o, k_fin, fin_thickness, fin_height, D_o):
+    if fin_type == "annular":
+        try:
+            return ht.fin_efficiency_Kern_Kraus(Do=D_o, D_fin=D_o + 2.0 * fin_height, t_fin=fin_thickness, k_fin=k_fin, h=h_o)
+        except Exception as exc:
+            warnings.warn(f"Annular fin efficiency fallback to rectangular formula: {exc}", RuntimeWarning)
+    m_fin = np.sqrt(2 * h_o / (k_fin * fin_thickness))
+    return np.tanh(m_fin * fin_height) / (m_fin * fin_height)
 
 
 def _properties_from_chedl(name, calc_temp_c, pressure):
@@ -197,7 +216,10 @@ class FinTubeHeatExchanger:
             elif self.flow_type == 'cross_unmixed':
                 epsilon = 1 - np.exp((1/C_r) * (NTU**0.22) * (np.exp(-C_r * (NTU**0.78)) - 1))
             elif self.flow_type == 'cross_mixed_unmixed':
-                epsilon = (1/C_r) * (1 - np.exp(-C_r * (1 - np.exp(-NTU))))
+                if C_h >= C_c:
+                    epsilon = (1/C_r) * (1 - np.exp(-C_r * (1 - np.exp(-NTU))))
+                else:
+                    epsilon = 1 - np.exp(-(1/C_r) * (1 - np.exp(-C_r * NTU)))
                 
         elif source == 'ht':
             ht_subtype = self._map_ht_flow_type(C_h, C_c)
@@ -219,6 +241,8 @@ class FinTubeHeatExchanger:
             'Source': source,
             'Q [W]': q,
             'epsilon': epsilon,
+            'T_hot_in [C]': T_hot_in,
+            'T_cold_in [C]': T_cold_in,
             'T_hot_out [C]': T_hot_out,
             'T_cold_out [C]': T_cold_out,
             'NTU': NTU,
@@ -269,6 +293,8 @@ class FinTubeHeatExchanger:
             'Source': 'PyChemEngg',
             'Q [W]': q,
             'epsilon': epsilon,
+            'T_hot_in [C]': T_hot_in,
+            'T_cold_in [C]': T_cold_in,
             'T_hot_out [C]': T_hot_in - (q / C_h),
             'T_cold_out [C]': T_cold_in + (q / C_c),
             'NTU': NTU,
@@ -304,8 +330,8 @@ class FinTubeHeatExchanger:
                 
             F = 1.0
             if 'cross' in self.flow_type:
-                _append_unique(warnings, "Çapraz akış LMTD F faktörü için F=0.9 yaklaşık kabul edildi; kritik tasarımda ε-NTU/ht sonucu esas alınmalıdır.")
-                F = 0.9
+                _append_unique(warnings, "Çapraz akış LMTD F faktörü için F=max(0.1, 1-0.25PR) yaklaşık kabulü kullanıldı; kritik tasarımda ε-NTU/ht sonucu esas alınmalıdır.")
+                F = _crossflow_lmtd_factor(T_hot_in, T_cold_in, T_h_o, T_c_o, C_h, C_c)
 
             Q_lmtd = self.U * self.A * LMTD * F
             return Q - Q_lmtd
@@ -322,13 +348,23 @@ class FinTubeHeatExchanger:
 
         T_hot_out = T_hot_in - (q_found / C_h)
         T_cold_out = T_cold_in + (q_found / C_c)
+        C_min = min(C_h, C_c)
+        C_max = max(C_h, C_c)
+        q_max = C_min * (T_hot_in - T_cold_in)
+        epsilon = q_found / q_max if q_max > 0 else 0.0
+        NTU = (self.U * self.A) / C_min if C_min > 0 else 0.0
         
         return {
             'Method': 'LMTD Iteration',
             'Source': source,
             'Q [W]': q_found,
+            'T_hot_in [C]': T_hot_in,
+            'T_cold_in [C]': T_cold_in,
             'T_hot_out [C]': T_hot_out,
             'T_cold_out [C]': T_cold_out,
+            'epsilon': epsilon,
+            'NTU': NTU,
+            'C_r': C_min / C_max if C_max > 0 else 0.0,
             'status': 'warning' if status == 'ok' and warnings else status,
             'warnings': warnings
         }
@@ -369,11 +405,8 @@ class FinTubeHeatExchanger:
                 
             F = 1.0
             if 'cross' in self.flow_type:
-                P = (T_c_out - T_cold_in) / (T_hot_in - T_cold_in)
-                R = C_c / C_h
-                _append_unique(warnings, "Custom çapraz akış LMTD çözümünde yaklaşık F sınırlaması kullanıldı.")
-                F = 1.0 - (0.25 * P * R)
-                if F < 0.1: F = 0.1
+                _append_unique(warnings, "Custom çapraz akış LMTD çözümünde yaklaşık F=max(0.1, 1-0.25PR) sınırlaması kullanıldı.")
+                F = _crossflow_lmtd_factor(T_hot_in, T_cold_in, T_h_out, T_c_out, C_h, C_c)
                     
             Q_lmtd = self.U * self.A * LMTD * F
             return Q - Q_lmtd
@@ -389,9 +422,13 @@ class FinTubeHeatExchanger:
                 'Method': 'LMTD Iteration',
                 'Source': 'custom',
                 'Q [W]': Q_found,
+                'T_hot_in [C]': T_hot_in,
+                'T_cold_in [C]': T_cold_in,
                 'T_hot_out [C]': T_h_out,
                 'T_cold_out [C]': T_c_out,
                 'epsilon': eps_found,
+                'NTU': (self.U * self.A) / C_min if C_min > 0 else 0.0,
+                'C_r': C_min / C_max if C_max > 0 else 0.0,
                 'status': 'warning' if warnings else 'ok',
                 'warnings': warnings
             }
@@ -415,6 +452,8 @@ class FinTubeHeatExchanger:
         
         Q_hot_side = C_h * (T_hot_in - T_hot_out)
         Q_cold_side = C_c * (T_cold_out - T_cold_in)
+        balance_ref = max(abs(Q_hot_side), abs(Q_cold_side), 1e-12)
+        balance_error_fraction = abs(Q_hot_side - Q_cold_side) / balance_ref
         
         # Gerçek Q (ortalama alarak veya enerji kaybı hesabı yaparak)
         Q_avg = (Q_hot_side + Q_cold_side) / 2.0
@@ -424,6 +463,11 @@ class FinTubeHeatExchanger:
         epsilon_actual = Q_avg / Q_max if Q_max > 0 else 0
         if Q_hot_side < 0 or Q_cold_side < 0:
             warnings.append("Ölçülen çıkış sıcaklıkları negatif ısı transferi üretiyor; performans sonucu fiziksel değildir.")
+        if balance_error_fraction > ENERGY_BALANCE_WARNING_FRACTION:
+            warnings.append(
+                f"Enerji dengesi sapmasi %{balance_error_fraction*100:.2f}; "
+                f"sicak ve soguk taraf Q farki %{ENERGY_BALANCE_WARNING_FRACTION*100:.1f} esigini asiyor."
+            )
         if epsilon_actual < 0 or epsilon_actual > 1:
             warnings.append("Gerçekleşen effectiveness 0-1 aralığı dışında; çıkış sıcaklıkları veya debiler tutarsız olabilir.")
         
@@ -440,12 +484,8 @@ class FinTubeHeatExchanger:
                 
             F = 1.0
             if 'cross' in self.flow_type:
-                P = (T_cold_out - T_cold_in) / (T_hot_in - T_cold_in)
-                R = C_c / C_h
-                _append_unique(warnings, "Çapraz akış gerçek performans LMTD hesabında yaklaşık F sınırlaması kullanıldı.")
-                F = 1.0 - (0.25 * P * R)
-                if F < 0.1:
-                    F = 0.1
+                _append_unique(warnings, "Çapraz akış gerçek performans LMTD hesabında yaklaşık F=max(0.1, 1-0.25PR) sınırlaması kullanıldı.")
+                F = _crossflow_lmtd_factor(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c)
                     
             U_required = Q_avg / (self.A * LMTD * F) if (self.A * LMTD * F) > 0 else 0
         except Exception as exc:
@@ -458,6 +498,7 @@ class FinTubeHeatExchanger:
             'Q_hot [W]': Q_hot_side,
             'Q_cold [W]': Q_cold_side,
             'Q_avg [W]': Q_avg,
+            'energy_balance_error_fraction': balance_error_fraction,
             'epsilon_actual': epsilon_actual,
             'U_required': U_required,
             'LMTD': LMTD,
@@ -470,15 +511,24 @@ class FinTubeHeatExchanger:
         Re = _require_positive(f"{side_name} Reynolds", Re)
         Pr = _require_positive(f"{side_name} Prandtl", Pr)
         if Re <= 2300:
+            warnings.append(f"{side_name}: laminer akista Nu={laminar_nu:.2f} sabit sinir kosulu varsayimiyla kullanildi.")
             return laminar_nu
         if Re < 10000:
-            warnings.append(f"{side_name}: Re={Re:.0f} geçiş bölgesinde; laminer ve Dittus-Boelter arasında interpolasyon kullanıldı.")
-            nu_turb_10000 = 0.023 * (10000.0**0.8) * (Pr**n_factor)
-            frac = (Re - 2300.0) / (10000.0 - 2300.0)
-            return laminar_nu + frac * (nu_turb_10000 - laminar_nu)
+            warnings.append(f"{side_name}: Re={Re:.0f} geçiş bölgesinde; Gnielinski korelasyonu yaklaşık olarak kullanıldı.")
+            try:
+                fd = (0.79 * np.log(Re) - 1.64) ** -2
+                return ht.conv_internal.turbulent_Gnielinski(Re=Re, Pr=Pr, fd=fd)
+            except Exception as exc:
+                warnings.append(f"{side_name}: Gnielinski uygulanamadi; Dittus-Boelter yedegi kullanildi: {exc}")
+                return 0.023 * (Re**0.8) * (Pr**n_factor)
         if Pr < 0.7 or Pr > 160:
-            warnings.append(f"{side_name}: Pr={Pr:.3g} Dittus-Boelter tipik geçerlilik aralığı dışında.")
-        return 0.023 * (Re**0.8) * (Pr**n_factor)
+            warnings.append(f"{side_name}: Pr={Pr:.3g} Gnielinski tipik geçerlilik aralığı dışında.")
+        try:
+            fd = (0.79 * np.log(Re) - 1.64) ** -2
+            return ht.conv_internal.turbulent_Gnielinski(Re=Re, Pr=Pr, fd=fd)
+        except Exception as exc:
+            warnings.append(f"{side_name}: Gnielinski uygulanamadi; Dittus-Boelter yedegi kullanildi: {exc}")
+            return 0.023 * (Re**0.8) * (Pr**n_factor)
 
     def calculate_geometric_U(self, geom: dict, m_hot: float, m_cold: float, hot_is_tube: bool = False):
         """
@@ -490,7 +540,11 @@ class FinTubeHeatExchanger:
         L = geom['L']
         N = geom.get('N_tubes', 1)
         k_wall = geom['k_wall']
+        R_f_i = float(geom.get('R_f_i', 0.0) or 0.0)
+        R_f_o = float(geom.get('R_f_o', 0.0) or 0.0)
         warnings = []
+        if R_f_i < 0 or R_f_o < 0:
+            raise ValueError("Fouling dirençleri negatif olamaz.")
 
         D_o = _require_positive("Dış çap", D_o)
         D_i = _require_positive("İç çap", D_i)
@@ -553,18 +607,21 @@ class FinTubeHeatExchanger:
                 Pr_o = (fluid_out.cp * fluid_out.mu) / fluid_out.k_cond
             
             if geom.get('is_finned', False):
+                # Briggs-Young style external Nusselt correlation for circular finned tube banks:
+                # Nu = 0.134 Re^0.681 Pr^(1/3) (s/h)^0.2 (s/t)^0.1134.
+                # Fin efficiency supports rectangular fins or annular fins via ht.fin_efficiency_Kern_Kraus.
                 fin_density = _require_positive("Kanatçık yoğunluğu", geom['fin_density'])
                 fin_thickness = _require_positive("Kanatçık kalınlığı", geom['fin_thickness'])
                 h_b = _require_positive("Kanatçık yüksekliği", geom['fin_height'])
                 k_fin = _require_positive("Kanatçık ısıl iletkenliği", geom['k_fin'])
+                fin_type = geom.get('fin_type', 'annular')
                 s = (1.0 / fin_density) - fin_thickness
                 if s <= 0:
                     raise ValueError("Kanatçık aralığı pozitif olmalıdır; fin_density ve fin_thickness değerlerini kontrol edin.")
                 try:
                     Nu_o = 0.134 * (Re_o**0.681) * (Pr_o**0.33) * ((s/h_b)**0.2) * ((s/geom['fin_thickness'])**0.1134)
                     h_o = (Nu_o * fluid_out.k_cond) / D_o
-                    m_fin = np.sqrt(2 * h_o / (k_fin * fin_thickness))
-                    eta_fin = np.tanh(m_fin * h_b) / (m_fin * h_b)
+                    eta_fin = _fin_efficiency(fin_type, h_o, k_fin, fin_thickness, h_b, D_o)
                 except Exception as exc:
                     warnings.append(f"Kanatçık korelasyonu uygulanamadı; çıplak boru dış korelasyonuna düşüldü: {exc}")
                     eta_fin = 1.0
@@ -607,8 +664,10 @@ class FinTubeHeatExchanger:
             
         R_i = 1.0 / (h_i * A_i)
         R_o = 1.0 / (h_o * A_total_out * eta_fin)
+        R_f_i_total = R_f_i / A_i if R_f_i > 0 else 0.0
+        R_f_o_total = R_f_o / A_total_out if R_f_o > 0 else 0.0
         
-        U_A_total = 1.0 / (R_i + R_wall + R_o)
+        U_A_total = 1.0 / (R_i + R_f_i_total + R_wall + R_f_o_total + R_o)
         
         self.U = U_A_total / A_total_out
         self.A = A_total_out
@@ -621,6 +680,10 @@ class FinTubeHeatExchanger:
             'Re_i': Re_i,
             'Re_o': Re_o,
             'R_wall': R_wall,
+            'R_f_i': R_f_i,
+            'R_f_o': R_f_o,
+            'R_f_i_total': R_f_i_total,
+            'R_f_o_total': R_f_o_total,
             'eta_fin': eta_fin,
             'status': 'warning' if warnings else 'ok',
             'warnings': warnings
@@ -664,7 +727,6 @@ class FinTubeHeatExchanger:
         ax.set_ylim(0, 5)
         ax.axis('off')
         
-        import matplotlib.patches as patches
         
         # Gövde / Dış Ortam Kutusu
         rect = patches.Rectangle((2, 1), 6, 3, linewidth=2, edgecolor='black', facecolor='#f0f0f0', zorder=1)
@@ -697,4 +759,85 @@ class FinTubeHeatExchanger:
         plt.title(f"Heat Exchanger Schematic - {self.flow_type.replace('_', ' ').title()}", fontsize=14)
         plt.tight_layout()
         
+        return fig
+
+    def plot_temperature_profile(self, result, fig=None):
+        if fig is None:
+            fig = plt.figure(figsize=(8, 4))
+        else:
+            fig.clear()
+        ax = fig.add_subplot(111)
+        Th_in = result.get('T_hot_in [C]')
+        Tc_in = result.get('T_cold_in [C]')
+        if Th_in is None or Tc_in is None:
+            raise ValueError("Temperature profile requires inlet temperatures in the result.")
+        Th_out = result['T_hot_out [C]']
+        Tc_out = result['T_cold_out [C]']
+        x = np.linspace(0.0, 1.0, 50)
+        Th = Th_in + (Th_out - Th_in) * x
+        if self.flow_type == 'counter':
+            Tc = Tc_out + (Tc_in - Tc_out) * x
+            cold_label = "Cold fluid, opposite direction"
+        elif self.flow_type == 'parallel':
+            Tc = Tc_in + (Tc_out - Tc_in) * x
+            cold_label = "Cold fluid"
+        else:
+            Tc = Tc_in + (Tc_out - Tc_in) * (1.0 - np.exp(-3.0*x)) / (1.0 - np.exp(-3.0))
+            cold_label = "Cold fluid, representative crossflow"
+        ax.plot(x, Th, color="#c0392b", lw=2.5, label="Hot fluid")
+        ax.plot(x, Tc, color="#2471a3", lw=2.5, label=cold_label)
+        ax.fill_between(x, Tc, Th, color="#f5b041", alpha=0.12)
+        ax.set_xlabel("Normalized heat transfer length")
+        ax.set_ylabel("Temperature [C]")
+        ax.set_title("Temperature Profile")
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        fig.tight_layout()
+        return fig
+
+    def plot_enhanced_schematic(self, result=None, fig=None):
+        if fig is None:
+            fig = plt.figure(figsize=(8, 4))
+        else:
+            fig.clear()
+        ax = fig.add_subplot(111)
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 5)
+        ax.axis("off")
+        body = patches.FancyBboxPatch((2, 1), 6, 3, boxstyle="round,pad=0.08", linewidth=1.8, edgecolor="#303030", facecolor="#f4f7f9")
+        ax.add_patch(body)
+        for row, y in enumerate(np.linspace(1.45, 3.55, 5)):
+            offset = 0.25 if row % 2 else 0.0
+            for x in np.linspace(2.45 + offset, 7.35, 8):
+                ax.add_patch(patches.Circle((x, y), 0.08, facecolor="#7f8c8d", edgecolor="#34495e", lw=0.7))
+        for x in np.linspace(2.35, 7.65, 10):
+            ax.plot([x, x + 0.12, x - 0.12, x], [1.15, 1.45, 1.75, 2.05], color="#b0b7bd", lw=0.8, alpha=0.8)
+            ax.plot([x, x + 0.12, x - 0.12, x], [2.95, 3.25, 3.55, 3.85], color="#b0b7bd", lw=0.8, alpha=0.8)
+
+        def temp_label(key, prefix):
+            if not result or result.get(key) is None:
+                return prefix
+            return f"{prefix}\n{result[key]:.1f} C"
+
+        def arrow(x, y, dx, dy, color, label, ox=0.0, oy=0.28):
+            ax.annotate("", xy=(x+dx, y+dy), xytext=(x, y), arrowprops=dict(arrowstyle="-|>", lw=3, color=color))
+            ax.text(x + dx/2 + ox, y + dy/2 + oy, label, color=color, fontweight="bold", ha="center", va="center")
+
+        if self.flow_type == "parallel":
+            arrow(1, 4, 1.5, 0, "#c0392b", temp_label('T_hot_in [C]', f"Hot In\n{self.hot_fluid.name}"))
+            arrow(7.5, 4, 1.5, 0, "#e67e22", temp_label('T_hot_out [C]', "Hot Out"))
+            arrow(1, 2, 1.5, 0, "#2471a3", temp_label('T_cold_in [C]', f"Cold In\n{self.cold_fluid.name}"))
+            arrow(7.5, 2, 1.5, 0, "#1abc9c", temp_label('T_cold_out [C]', "Cold Out"))
+        elif self.flow_type == "counter":
+            arrow(1, 4, 1.5, 0, "#c0392b", temp_label('T_hot_in [C]', f"Hot In\n{self.hot_fluid.name}"))
+            arrow(7.5, 4, 1.5, 0, "#e67e22", temp_label('T_hot_out [C]', "Hot Out"))
+            arrow(9, 2, -1.5, 0, "#2471a3", temp_label('T_cold_in [C]', f"Cold In\n{self.cold_fluid.name}"))
+            arrow(2.5, 2, -1.5, 0, "#1abc9c", temp_label('T_cold_out [C]', "Cold Out"))
+        else:
+            arrow(1, 3, 1.5, 0, "#2471a3", temp_label('T_cold_in [C]', f"Cold In\n{self.cold_fluid.name}"))
+            arrow(7.5, 3, 1.5, 0, "#1abc9c", temp_label('T_cold_out [C]', "Cold Out"))
+            arrow(5, 4.85, 0, -1.0, "#c0392b", temp_label('T_hot_in [C]', f"Hot In\n{self.hot_fluid.name}"), ox=1.1, oy=-0.05)
+            arrow(5, 1.15, 0, -1.0, "#e67e22", temp_label('T_hot_out [C]', "Hot Out"), ox=1.0, oy=-0.05)
+        ax.text(5, 4.35, self.flow_type.replace("_", " ").title(), ha="center", fontweight="bold")
+        fig.tight_layout()
         return fig

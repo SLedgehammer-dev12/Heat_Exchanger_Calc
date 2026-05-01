@@ -3,6 +3,15 @@ import os
 from logging.handlers import RotatingFileHandler
 
 
+NOISY_LOGGERS = {
+    "matplotlib": logging.WARNING,
+    "matplotlib.font_manager": logging.WARNING,
+    "PIL": logging.WARNING,
+    "PIL.PngImagePlugin": logging.WARNING,
+    "urllib3": logging.WARNING,
+}
+
+
 def get_log_dir():
     base_dir = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     log_dir = os.path.join(base_dir, "HeatExchangerCalc", "logs")
@@ -15,6 +24,7 @@ def setup_logging(app_mode="app"):
     log_file = os.path.join(log_dir, "heat_exchanger_calc.log")
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+    configure_third_party_loggers()
 
     for handler in root_logger.handlers:
         if getattr(handler, "_heat_exchanger_file_handler", False):
@@ -37,3 +47,8 @@ def setup_logging(app_mode="app"):
     root_logger.addHandler(file_handler)
     logging.getLogger(__name__).info("Logging initialized for %s: %s", app_mode, log_file)
     return log_file
+
+
+def configure_third_party_loggers():
+    for logger_name, level in NOISY_LOGGERS.items():
+        logging.getLogger(logger_name).setLevel(level)

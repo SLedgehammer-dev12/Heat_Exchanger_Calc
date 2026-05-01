@@ -158,18 +158,21 @@ def get_mixture_fluid_data(components, comp_type='mole', T_c=200.0, P_pa=101325.
     
     comps = {k: v for k, v in components.items() if v > 0}
     if not comps:
-        return {'cp': 1000.0, 'density': 1.0, 'mu': 2e-5, 'k_cond': 0.03}
+        raise ValueError("Karışım kompozisyonu boş. En az bir bileşen için pozitif oran girilmelidir.")
+    unknown = sorted(k for k in comps if k not in MW_map)
+    if unknown:
+        raise ValueError(f"Kar???m molek?l a??rl??? bilinmeyen bile?en i?eriyor: {', '.join(unknown)}")
         
     total_val = sum(comps.values())
     
     if comp_type == 'mass':
         mass_fracs = {k: v/total_val for k, v in comps.items()}
-        total_moles = sum(mass_fracs[k] / MW_map.get(k, 28.0) for k in comps)
-        mole_fracs = {k: (mass_fracs[k] / MW_map.get(k, 28.0)) / total_moles for k in comps}
+        total_moles = sum(mass_fracs[k] / MW_map[k] for k in comps)
+        mole_fracs = {k: (mass_fracs[k] / MW_map[k]) / total_moles for k in comps}
     else:
         mole_fracs = {k: v/total_val for k, v in comps.items()}
-        total_mass = sum(mole_fracs[k] * MW_map.get(k, 28.0) for k in comps)
-        mass_fracs = {k: (mole_fracs[k] * MW_map.get(k, 28.0)) / total_mass for k in comps}
+        total_mass = sum(mole_fracs[k] * MW_map[k] for k in comps)
+        mass_fracs = {k: (mole_fracs[k] * MW_map[k]) / total_mass for k in comps}
         
     # HEOS karisim stringi olustur
     heos_str = 'HEOS::' + '&'.join([f'{k}[{mole_fracs[k]:.4f}]' for k in comps.keys()])
@@ -189,7 +192,8 @@ def get_mixture_fluid_data(components, comp_type='mole', T_c=200.0, P_pa=101325.
             'cp': cp_mix,
             'density': rho_mix,
             'mu': mu_mix,
-            'k_cond': k_mix
+            'k_cond': k_mix,
+            'property_source': 'CoolProp HEOS mixture'
         }
     except Exception as e:
         logger.info(f"CoolProp HEOS faz dengesi bu gaz karışımı için kararsız (Normal). İdeal Gaz Karışım (Wilke) modeline geçiliyor...")

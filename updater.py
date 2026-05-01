@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import shutil
 import urllib.error
@@ -113,9 +114,20 @@ def download_release_asset(update_info, target_dir, app_kind="desktop", timeout=
         with open(part_path, "wb") as output:
             shutil.copyfileobj(response, output, length=1024 * 1024)
     os.replace(part_path, target_path)
+    digest = asset.get("digest", "")
+    if digest.startswith("sha256:"):
+        expected_hash = digest.split(":", 1)[1].lower()
+        sha256 = hashlib.sha256()
+        with open(target_path, "rb") as downloaded:
+            for chunk in iter(lambda: downloaded.read(1024 * 1024), b""):
+                sha256.update(chunk)
+        actual_hash = sha256.hexdigest().lower()
+        if actual_hash != expected_hash:
+            os.remove(target_path)
+            raise ValueError("İndirilen dosyanın SHA256 doğrulaması başarısız oldu.")
     return {
         "path": target_path,
         "name": asset["name"],
         "size": os.path.getsize(target_path),
-        "digest": asset.get("digest", ""),
+        "digest": digest,
     }

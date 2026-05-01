@@ -23,6 +23,29 @@ def _add_mapping(lines, data, skip_empty=False):
         lines.append(f"- {key}: {value}")
 
 
+GEOMETRY_LABELS = {
+    "D_o": "Boru dış çapı D_o [m]",
+    "D_i": "Boru iç çapı D_i [m]",
+    "L": "Boru uzunluğu [m]",
+    "N_tubes": "Boru sayısı",
+    "k_wall": "Boru malzemesi ısıl iletkenliği [W/m.K]",
+    "D_shell": "Gövde iç çapı [m]",
+    "pitch": "Transverse pitch [m]",
+    "is_finned": "Kanatçıklı boru",
+    "fin_height": "Kanatçık yüksekliği [m]",
+    "fin_thickness": "Kanatçık kalınlığı [m]",
+    "fin_density": "Kanatçık yoğunluğu [1/m]",
+    "k_fin": "Kanatçık ısıl iletkenliği [W/m.K]",
+    "fin_type": "Kanatçık tipi",
+    "R_f_i": "Fouling iç direnci [m2.K/W]",
+    "R_f_o": "Fouling dış direnci [m2.K/W]",
+}
+
+
+def _add_geometry(lines, geometry):
+    _add_mapping(lines, {GEOMETRY_LABELS.get(k, k): v for k, v in geometry.items()}, skip_empty=True)
+
+
 def _collect_warnings(*results):
     warnings = []
     for result in results:
@@ -109,7 +132,7 @@ def build_calculation_report(context):
             "A": f"{_fmt(inputs.get('A'), 4)} m2",
         })
     else:
-        _add_mapping(lines, geometry, skip_empty=True)
+        _add_geometry(lines, geometry)
         if geo_result:
             _add_mapping(lines, {
                 "Hesaplanan U": f"{_fmt(geo_result.get('U'), 4)} W/m2.K",
@@ -138,24 +161,24 @@ def build_calculation_report(context):
         _add_mapping(lines, {
             "Reynolds": "Re = ρ V D / μ (kodda fluids.core.Reynolds kullanılır)",
             "Prandtl": "Pr = cp μ / k (kodda fluids.core.Prandtl kullanılır)",
-            "İç türbülanslı Nu": "Dittus-Boelter: Nu = 0.023 Re^0.8 Pr^n; geçiş bölgesinde uyarı/interpolasyon",
+            "İç türbülanslı Nu": "Birincil: Gnielinski (fd=(0.79 ln(Re)-1.64)^-2); yedek: Dittus-Boelter Nu=0.023 Re^0.8 Pr^n",
             "Laminer Nu": "İç boru için Nu=3.66; annulus tarafı için Nu=4.36",
             "Duvar direnci": "R_wall = ln(D_o/D_i)/(2π k_wall L N)",
-            "Toplam UA": "UA = 1/(R_i + R_wall + R_o)",
+            "Toplam UA": "UA = 1/(R_i + R_f_i + R_wall + R_f_o + R_o)",
         })
 
     _section(lines, "6. Ara Hesaplar")
-    C_h = inputs.get("m_hot_kg_s") * fluids["hot"].get("cp")
-    C_c = inputs.get("m_cold_kg_s") * fluids["cold"].get("cp")
+    C_h = (inputs.get("m_hot_kg_s") or 0.0) * (fluids.get("hot", {}).get("cp") or 0.0)
+    C_c = (inputs.get("m_cold_kg_s") or 0.0) * (fluids.get("cold", {}).get("cp") or 0.0)
     C_min = min(C_h, C_c)
     C_max = max(C_h, C_c)
-    q_max = C_min * (inputs.get("T_hot_in_C") - inputs.get("T_cold_in_C"))
+    q_max = C_min * ((inputs.get("T_hot_in_C") or 0.0) - (inputs.get("T_cold_in_C") or 0.0))
     _add_mapping(lines, {
         "C_h": f"{_fmt(C_h, 3)} W/K",
         "C_c": f"{_fmt(C_c, 3)} W/K",
         "C_min": f"{_fmt(C_min, 3)} W/K",
         "C_max": f"{_fmt(C_max, 3)} W/K",
-        "Cr": _fmt(C_min / C_max, 6),
+        "Cr": _fmt(C_min / C_max if C_max else None, 6),
         "Q_max": f"{_fmt(q_max / 1000, 3)} kW",
         "NTU": _fmt(selected.get("NTU"), 6),
     })
@@ -208,7 +231,7 @@ def build_calculation_report(context):
         lines.append("- Kritik uyarı yok.")
     lines.extend([
         "- Çapraz akış LMTD düzeltme faktörü bu uygulamada yaklaşık ele alınır; kritik tasarımda ε-NTU ve bağımsız kaynak karşılaştırması esas alınmalıdır.",
-        "- Dittus-Boelter korelasyonu tam gelişmiş türbülanslı iç akışlar için uygundur; laminer/geçiş bölgesi sonuçları ön tasarım kabulüdür.",
+        "- Gnielinski korelasyonu ana iç akış korelasyonudur; Dittus-Boelter sadece yedek olarak kullanılır. Laminer/geçiş bölgesi sonuçları ön tasarım kabulüdür.",
         "- Termal yağ JSON verileri screening seviyesindedir; üretici datasheet değerleri ile doğrulanmalıdır.",
     ])
 
@@ -224,3 +247,46 @@ def build_calculation_report(context):
     ])
 
     return "\n".join(lines) + "\n"
+
+
+def build_calculation_report_pdf(context):
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    body = styles["BodyText"]
+    body.fontSize = 9
+    body.leading = 12
+    story = [Paragraph("Heat Exchanger Calc Raporu", styles["Title"]), Spacer(1, 10)]
+
+    for line in build_calculation_report(context).splitlines():
+        text = line.strip()
+        if not text:
+            story.append(Spacer(1, 5))
+            continue
+        if set(text) <= {"=", "-"}:
+            continue
+        style = styles["Heading2"] if text[:1].isdigit() and "." in text[:4] else body
+        safe = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("  ", "&nbsp;&nbsp;")
+        )
+        story.append(Paragraph(safe, style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()

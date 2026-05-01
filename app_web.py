@@ -5,42 +5,33 @@ import streamlit as st
 import logging
 import io
 from logging_config import setup_logging
+from engineering_utils import (
+    fluid_report_data,
+    from_celsius,
+    result_warnings,
+    to_celsius,
+    to_kg_s,
+)
 
 LOG_FILE = setup_logging("web")
 logger = logging.getLogger(__name__)
 
-def to_kg_s(val, unit, density):
-    if unit == "kg/h": return val / 3600.0
-    if unit == "lb/s": return val * 0.453592
-    if unit == "m³/s": return val * density
-    if unit == "m³/h": return (val / 3600.0) * density
-    if unit == "CFM": return (val * 0.000471947) * density
-    return val
-
-def to_celsius(val, unit):
-    if unit == "°F": return (val - 32.0) * 5.0 / 9.0
-    if unit == "K": return val - 273.15
-    return val
-
-def from_celsius(val, unit):
-    if unit == "°F": return (val * 9.0 / 5.0) + 32.0
-    if unit == "K": return val + 273.15
-    return val
-
 
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
-from reporting import build_calculation_report
+from reporting import build_calculation_report, build_calculation_report_pdf
 from updater import check_for_update, download_release_asset, default_download_dir
 from version import APP_NAME, VERSION
 
 FLOW_OPTIONS = [
     "Çapraz Akış (Cross Flow Unmixed)",
+    "Çapraz Akış (Mixed/Unmixed)",
     "Ters Akış (Counter Flow)",
     "Paralel Akış (Parallel Flow)",
 ]
 FLOW_MAP = {
     "Çapraz Akış (Cross Flow Unmixed)": "cross_unmixed",
+    "Çapraz Akış (Mixed/Unmixed)": "cross_mixed_unmixed",
     "Ters Akış (Counter Flow)": "counter",
     "Paralel Akış (Parallel Flow)": "parallel",
 }
@@ -122,6 +113,7 @@ DEFAULT_STATE = {
     "fin_t_mm": 0.4,
     "fin_density": 400,
     "fin_material": "Alüminyum (k=237)",
+    "fin_type": "Dairesel (Annular)",
 }
 
 
@@ -259,16 +251,6 @@ def save_state(current_data):
     return json.dumps(current_data, indent=4, ensure_ascii=False)
 
 
-def result_warnings(*results):
-    warnings = []
-    for result in results:
-        if not result:
-            continue
-        for msg in result.get("warnings", []):
-            if msg not in warnings:
-                warnings.append(msg)
-    return warnings
-
 
 def crosscheck_row(result, reference_q=None):
     q_value = result["Q [W]"]
@@ -286,17 +268,6 @@ def crosscheck_row(result, reference_q=None):
         "Uyarılar": " | ".join(result.get("warnings", [])),
     }
 
-
-def fluid_report_data(label, fluid_data, fluid_obj):
-    return {
-        "label": label,
-        "name": fluid_obj.name,
-        "source": fluid_data.get("property_source") or getattr(fluid_obj, "property_source", None) or ("CoolProp" if fluid_obj.is_coolprop else "Manual/Correlation"),
-        "cp": fluid_obj.cp,
-        "density": fluid_obj.density,
-        "mu": fluid_obj.mu,
-        "k_cond": fluid_obj.k_cond,
-    }
 
 
 st.set_page_config(page_title=APP_NAME, page_icon="🌡️", layout="wide")
@@ -577,7 +548,7 @@ with tab_geom:
             geom_dict["k_wall"] = mat_options[tube_material]
             current_data["tube_material"] = tube_material
 
-            if flow_type == FLOW_OPTIONS[0]:
+            if FLOW_MAP[flow_type].startswith("cross"):
                 pitch_mm = st.number_input("Transverse Pitch (mm)", value=float(get_val("pitch_mm")))
                 geom_dict["pitch"] = pitch_mm / 1000.0
                 current_data["pitch_mm"] = pitch_mm
@@ -594,7 +565,16 @@ with tab_geom:
             hot_is_tube = hot_is_tube_str == "Sıcak Akışkan"
             current_data["hot_is_tube"] = hot_is_tube_str
 
+            R_f_i = st.number_input("Fouling İç (m2K/W)", value=float(get_val("R_f_i") or 0.0), format="%.6f")
+            R_f_o = st.number_input("Fouling Dış (m2K/W)", value=float(get_val("R_f_o") or 0.0), format="%.6f")
+            geom_dict["R_f_i"] = R_f_i
+            geom_dict["R_f_o"] = R_f_o
+            current_data["R_f_i"] = R_f_i
+            current_data["R_f_o"] = R_f_o
+
         with g3:
+            if not FLOW_MAP[flow_type].startswith("cross"):
+                st.caption("Kanatçık alanı özellikle çapraz akış/finned tube ön tasarımı için anlamlıdır; counter/parallel modda hesaba katılmaz.")
             is_finned_default = bool(get_val("is_finned"))
             is_finned = st.checkbox("Borular kanatçıklı mı?", value=is_finned_default)
             geom_dict["is_finned"] = is_finned
@@ -613,7 +593,13 @@ with tab_geom:
                 geom_dict["fin_height"] = fin_h_mm / 1000.0
                 geom_dict["fin_thickness"] = fin_t_mm / 1000.0
                 geom_dict["fin_density"] = fin_density
+                fin_type = st.selectbox(
+                    "Kanat??k Tipi",
+                    options=["Dairesel (Annular)", "Düz (Rectangular)"],
+                    index=safe_index(["Dairesel (Annular)", "Düz (Rectangular)"], get_val("fin_type") or "Dairesel (Annular)"),
+                )
                 geom_dict["k_fin"] = 237.0 if "Alüminyum" in fin_material else 45.0
+                geom_dict["fin_type"] = "rectangular" if "Rectangular" in fin_type else "annular"
 
                 current_data.update(
                     {
@@ -621,6 +607,7 @@ with tab_geom:
                         "fin_t_mm": fin_t_mm,
                         "fin_density": fin_density,
                         "fin_material": fin_material,
+                        "fin_type": fin_type,
                     }
                 )
 
@@ -804,9 +791,11 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 st.info(f"Effectiveness: %{res_main.get('epsilon', 0.0) * 100:.2f}")
 
             st.markdown("### Isı Değiştirici Akış Şeması")
-            st.pyplot(hx.plot_schematic())
+            st.pyplot(hx.plot_enhanced_schematic(result=res_main))
+            st.markdown("### SÄ±caklÄ±k Profili")
+            st.pyplot(hx.plot_temperature_profile(res_main))
 
-            report_text = build_calculation_report({
+            report_context = {
                 "methods": {
                     "Hesap amacı": calc_purpose,
                     "Akış tipi": flow_type,
@@ -835,7 +824,8 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 "results": {"main": res_main},
                 "actual_result": res_actual,
                 "crosscheck_results": crosscheck_results,
-            })
+            }
+            report_text = build_calculation_report(report_context)
 
             st.download_button(
                 "Sonuç Raporunu İndir (.txt)",
@@ -843,22 +833,22 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 file_name="isi_degistirici_raporu.txt",
             )
 
+            st.download_button(
+                "Sonuç Raporunu İndir (.pdf)",
+                build_calculation_report_pdf(report_context),
+                file_name="isi_degistirici_raporu.pdf",
+                mime="application/pdf",
+            )
+
         with tab_crosscheck:
             if pychemengg_warning:
                 st.info(pychemengg_warning)
-            # Display Logs
-            with tab_log:
-                st.markdown("### Hesaplama Logları")
-                
-                # Get log text
-                log_text = log_stream.getvalue()
-                
-                # We can't interactively filter easily without rerunning the calc, 
-                # but we can provide a quick radio to show everything. 
-                # Since streamlit clears variables, we just show raw DEBUG/INFO logs
-                st.code(log_text, language="log")
-                
             df = pd.DataFrame(
                 [crosscheck_row(r, reference_q=res_main["Q [W]"]) for r in crosscheck_results]
             )
             st.table(df)
+
+        with tab_log:
+            st.markdown("### Hesaplama Logları")
+            log_text = log_stream.getvalue()
+            st.code(log_text, language="log")
