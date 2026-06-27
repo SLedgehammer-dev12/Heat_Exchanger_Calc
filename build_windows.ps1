@@ -43,7 +43,7 @@ $common = @(
     "--add-data", "locale;locale"
 )
 
-pyinstaller @common --windowed --name HeatExchangerCalcDesktop app_desktop.py
+pyinstaller @common --windowed --name HeatExchangerCalcDesktop run_desktop.py
 
 $webArgs = @(
     "--hidden-import", "app_web",

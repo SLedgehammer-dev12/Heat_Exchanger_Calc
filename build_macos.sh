@@ -72,7 +72,7 @@ pyinstaller \
     --name HeatExchangerCalcDesktop \
     --icon app_icon.icns \
     --osx-bundle-identifier com.heat.exchanger.calc.desktop \
-    app_desktop.py
+    run_desktop.py
 
 # Web Launcher
 echo "[3/5] Building Web launcher..."
