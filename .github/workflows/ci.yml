@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e ".[dev,desktop,web]"
+      - run: mypy . --ignore-missing-imports
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libgl1
+      - run: uv pip install --system -e ".[dev,desktop,web]"
+      - run: python -m pytest test_*.py -v --tb=short
+      - name: Upload coverage HTML report
+        if: runner.os == 'ubuntu' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e ".[desktop,web]"
+      - run: python -c "from heat_exchanger import FinTubeHeatExchanger, Fluid; print('Engine OK')"
+      - run: python -c "from app_desktop import compute_desktop_calculation; print('Desktop OK')"
+      - run: python -c "from exceptions import InvalidInputError; print('exceptions OK')"
+      - run: python -c "from helpers import _is_finite; print('helpers OK')"
+      - run: python -c "from correlations import _bowman_lmtd_factor; print('correlations OK')"
+      - run: python -c "from plot_theme import PALETTE, apply_theme; apply_theme(); print('plot_theme OK')"
+      - run: python -c "from run_web import main as web_main; print('Web OK')"
+      - run: python -c "from run_desktop import main as desktop_main; print('Desktop launcher OK')"

@@ -1,11 +1,12 @@
-import json
 import hashlib
+import json
 import os
 import shutil
 import urllib.error
 import urllib.request
 import webbrowser
 
+from exceptions import UpdaterError
 from version import GITHUB_REPO, VERSION
 
 
@@ -63,11 +64,7 @@ def check_for_update(timeout=5):
         "latest_version": latest or "-",
         "release_url": release_url,
         "assets": assets,
-        "message": (
-            f"Yeni sürüm bulundu: v{latest}"
-            if update_available
-            else f"Program güncel: v{VERSION}"
-        ),
+        "message": (f"Yeni sürüm bulundu: v{latest}" if update_available else f"Program güncel: v{VERSION}"),
     }
 
 
@@ -96,13 +93,13 @@ def default_download_dir():
 def download_release_asset(update_info, target_dir, app_kind="desktop", timeout=30):
     asset = select_release_asset(update_info, app_kind=app_kind)
     if not asset:
-        raise ValueError("İndirilecek uygun release paketi bulunamadı.")
+        raise UpdaterError("İndirilecek uygun release paketi bulunamadı.")
     if not target_dir:
-        raise ValueError("İndirme klasörü seçilmedi.")
+        raise UpdaterError("İndirme klasörü seçilmedi.")
     os.makedirs(target_dir, exist_ok=True)
     url = asset.get("download_url")
     if not url:
-        raise ValueError("Release asset indirme bağlantısı bulunamadı.")
+        raise UpdaterError("Release asset indirme bağlantısı bulunamadı.")
 
     target_path = os.path.join(target_dir, asset["name"])
     part_path = target_path + ".part"
@@ -110,9 +107,8 @@ def download_release_asset(update_info, target_dir, app_kind="desktop", timeout=
         url,
         headers={"User-Agent": "HeatExchangerCalc-Updater"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        with open(part_path, "wb") as output:
-            shutil.copyfileobj(response, output, length=1024 * 1024)
+    with urllib.request.urlopen(request, timeout=timeout) as response, open(part_path, "wb") as output:
+        shutil.copyfileobj(response, output, length=1024 * 1024)
     os.replace(part_path, target_path)
     digest = asset.get("digest", "")
     if digest.startswith("sha256:"):
@@ -124,7 +120,7 @@ def download_release_asset(update_info, target_dir, app_kind="desktop", timeout=
         actual_hash = sha256.hexdigest().lower()
         if actual_hash != expected_hash:
             os.remove(target_path)
-            raise ValueError("İndirilen dosyanın SHA256 doğrulaması başarısız oldu.")
+            raise UpdaterError("İndirilen dosyanın SHA256 doğrulaması başarısız oldu.")
     return {
         "path": target_path,
         "name": asset["name"],

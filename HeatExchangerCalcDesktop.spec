@@ -1,20 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('data', 'data')]
+datas = [('data', 'data'), ('locale', 'locale')]
 binaries = []
-hiddenimports = ['scipy._cyutility', 'engineering_utils', 'reportlab']
+hiddenimports = [
+    'scipy._cyutility', 'engineering_utils', 'reportlab',
+    'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
+    'exceptions', 'helpers', 'correlations', 'plot_theme',
+]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')
 datas += collect_data_files('fluids')
 datas += collect_data_files('ht')
+datas += collect_data_files('pint')
+datas += collect_data_files('iapws')
 tmp_ret = collect_all('reportlab')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+icon_path = 'app_icon.icns' if sys.platform == 'darwin' else 'app_icon.ico'
+
 
 a = Analysis(
-    ['app_desktop.py'],
+    ['run_desktop.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -31,8 +40,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries,
+    a.datas,
     name='HeatExchangerCalcDesktop',
     debug=False,
     bootloader_ignore_signals=False,
@@ -45,14 +54,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='version_info.txt',
-    icon=['app_icon.ico'],
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='HeatExchangerCalcDesktop',
+    icon=[icon_path],
 )

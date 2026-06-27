@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          pip install PyQt5 streamlit
+
+      - name: Build
+        shell: powershell
+        run: .\build_windows.ps1 -SkipClean
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/
+          retention-days: 7
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          brew install create-dmg || true
+
+      - name: Build
+        run: bash build_macos.sh
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/
+          retention-days: 7
+
+  publish:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-windows/
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release-macos/
+
+      - name: Combine release artifacts and checksums
+        run: |
+          mkdir -p release
+          cp release-windows/*.exe release/ 2>/dev/null || true
+          cp release-macos/*.dmg release/ 2>/dev/null || true
+          cat release-windows/SHA256SUMS.txt release-macos/SHA256SUMS.txt > release/SHA256SUMS.txt
+          echo "--- Combined release/ ---"
+          ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Heat Exchanger Calc v${{ github.ref_name }}"
+          body: "See [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md) for details."
+          draft: false
+          prerelease: false
+          files: release/*
+          fail_on_unmatched_files: true

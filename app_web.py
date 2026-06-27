@@ -1,27 +1,32 @@
+import io
 import json
+import logging
 
 import pandas as pd
 import streamlit as st
-import logging
-import io
-from logging_config import setup_logging
+
 from engineering_utils import (
     fluid_report_data,
     from_celsius,
-    result_warnings,
     to_celsius,
     to_kg_s,
 )
+from logging_config import setup_logging
 
 LOG_FILE = setup_logging("web")
 logger = logging.getLogger(__name__)
 
 
+from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
 from reporting import build_calculation_report, build_calculation_report_pdf
-from updater import check_for_update, download_release_asset, default_download_dir
+from updater import check_for_update, default_download_dir, download_release_asset
 from version import APP_NAME, VERSION
+
+# Eşanjör tipi seçenekleri (görünen isim -> internal key)
+EXCH_TYPE_OPTIONS = list(EXCHANGER_TYPES.values())
+EXCH_TYPE_INTERNAL = {v: k for k, v in EXCHANGER_TYPES.items()}
 
 FLOW_OPTIONS = [
     "Çapraz Akış (Cross Flow Unmixed)",
@@ -36,6 +41,15 @@ FLOW_MAP = {
     "Paralel Akış (Parallel Flow)": "parallel",
 }
 FLOW_MAP_REVERSE = {value: key for key, value in FLOW_MAP.items()}
+
+EXCH_FLOW_OPTIONS_CACHE: dict[str, list[str]] = {}
+
+
+def _get_allowed_flow_labels(exch_type_internal: str) -> list[str]:
+    """Return display labels for flow types allowed by this exchanger type."""
+    allowed = EXCHANGER_ALLOWED_FLOWS.get(exch_type_internal, set())
+    return [label for label, internal in FLOW_MAP.items() if internal in allowed]
+
 
 CALC_PURPOSE_OPTIONS = [
     "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)",
@@ -74,6 +88,7 @@ STATE_KEY_ALIASES = {
 }
 
 DEFAULT_STATE = {
+    "exch_type": "Kanatçıklı Borulu",
     "flow_type": FLOW_OPTIONS[0],
     "calc_purpose": CALC_PURPOSE_OPTIONS[0],
     "solver_method": SOLVER_OPTIONS[0],
@@ -143,6 +158,12 @@ def normalize_loaded_state(data):
         normalized["u_calc_mode"] = DEFAULT_STATE["u_calc_mode"]
     if normalized.get("flow_type") not in FLOW_OPTIONS:
         normalized["flow_type"] = DEFAULT_STATE["flow_type"]
+    # Akış tipini eşanjör tipine göre doğrula
+    exch_label = normalized.get("exch_type", DEFAULT_STATE["exch_type"])
+    exch_internal = EXCH_TYPE_INTERNAL.get(exch_label, "finned_tube")
+    allowed_flow_labels = _get_allowed_flow_labels(exch_internal)
+    if normalized.get("flow_type") not in allowed_flow_labels and allowed_flow_labels:
+        normalized["flow_type"] = allowed_flow_labels[0]
 
     return normalized
 
@@ -198,7 +219,7 @@ def render_mixture_editor(side_label, state_prefix, T_c):
 
     with st.expander(f"🔧 {side_label} egzoz gazı kompozisyonu", expanded=True):
         c1, c2, c3 = st.columns(3)
-        for col, preset_name in zip((c1, c2, c3), MIXTURE_PRESETS):
+        for col, preset_name in zip((c1, c2, c3), MIXTURE_PRESETS, strict=False):
             if col.button(preset_name, key=f"{state_prefix}_preset_{preset_name}"):
                 st.session_state[mix_key] = dict(MIXTURE_PRESETS[preset_name])
 
@@ -251,7 +272,6 @@ def save_state(current_data):
     return json.dumps(current_data, indent=4, ensure_ascii=False)
 
 
-
 def crosscheck_row(result, reference_q=None):
     q_value = result["Q [W]"]
     diff_pct = ""
@@ -269,8 +289,128 @@ def crosscheck_row(result, reference_q=None):
     }
 
 
+def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
+    """Render previously computed results from cached data dict."""
+    hx_data = data["hx_data"]
+    geo_res = data.get("geo_res")
+    res_main = data["res_main"]
+    res_actual = data.get("res_actual")
+    crosscheck_results = data["crosscheck_results"]
+    pychemengg_warning = data.get("pychemengg_warning")
+    has_actual = data.get("has_actual", False)
+    report_context = data["report_context"]
+    report_text = data.get("report_text", "")
+    log_text = data.get("log_text", "")
+    u_t_hot = data.get("u_t_hot", "°C")
+    u_t_cold = data.get("u_t_cold", "°C")
+    U_value = data.get("U_value", 0.0)
+    Area = data.get("Area", 0.0)
+
+    from heat_exchanger import FinTubeHeatExchanger
+    from heat_exchanger import Fluid as _F
+
+    _h_hot = _F(name=hx_data["hot_name"], cp=1000, density=1, mu=1e-5, k_cond=0.03, is_coolprop=False)
+    _h_cold = _F(name=hx_data["cold_name"], cp=1000, density=1, mu=1e-5, k_cond=0.03, is_coolprop=False)
+    _hx = FinTubeHeatExchanger(
+        _h_hot,
+        _h_cold,
+        U=hx_data["U"],
+        A=hx_data["A"],
+        flow_type=hx_data["flow_type"],
+        exchanger_type=hx_data["exchanger_type"],
+    )
+
+    with tab_results:
+        st.success("Hesaplamalar tamamlandı")
+        if geo_res:
+            st.info(f"Geometrik Mod Sonucu: U = {U_value:.2f} W/m²K, Toplam Alan = {Area:.2f} m²")
+            for msg in geo_res.get("warnings", []):
+                st.warning(msg)
+            c_u1, c_u2, c_u3 = st.columns(3)
+            c_u1.metric("İç Taşınım Katsayısı (h_i)", f"{geo_res['h_i']:.1f} W/m²K")
+            c_u2.metric("Dış Taşınım Katsayısı (h_o)", f"{geo_res['h_o']:.1f} W/m²K")
+            c_u3.metric("Kanatçık Verimi", f"% {geo_res.get('eta_fin', 1.0) * 100:.1f}")
+
+        if has_actual and res_actual:
+            st.markdown("### Performans Değerlendirmesi")
+            for msg in res_actual.get("warnings", []):
+                st.warning(msg)
+            c_a1, c_a2, c_a3 = st.columns(3)
+            c_a1.metric("Sıcak Taraftan Atılan Isı", f"{res_actual['Q_hot [W]'] / 1000:.2f} kW")
+            c_a2.metric("Soğuk Tarafa Alınan Isı", f"{res_actual['Q_cold [W]'] / 1000:.2f} kW")
+            enerji_farki = (
+                abs(res_actual["Q_hot [W]"] - res_actual["Q_cold [W]"]) / max(abs(res_actual["Q_hot [W]"]), 1.0) * 100.0
+            )
+            c_a3.metric("Enerji Dengesi Sapması", f"% {enerji_farki:.2f}")
+            st.info(f"Gerçekleşen Effectiveness: %{res_actual['epsilon_actual'] * 100:.2f}")
+            st.warning(f"Gereken U Katsayısı: {res_actual['U_required']:.2f} W/m²K")
+        else:
+            st.markdown("### Sistem Tasarımı")
+            for msg in res_main.get("warnings", []):
+                st.warning(msg)
+            t_ho_disp = from_celsius(res_main["T_hot_out [C]"], u_t_hot)
+            t_co_disp = from_celsius(res_main["T_cold_out [C]"], u_t_cold)
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("Tasarım Isı Yükü", f"{res_main['Q [W]'] / 1000:.2f} kW")
+            col_m2.metric("Sıcak Çıkış", f"{t_ho_disp:.2f} {u_t_hot}")
+            col_m3.metric("Soğuk Çıkış", f"{t_co_disp:.2f} {u_t_cold}")
+            st.info(f"Effectiveness: %{res_main.get('epsilon', 0.0) * 100:.2f}")
+
+        st.markdown("### Isı Değiştirici Akış Şeması")
+        st.pyplot(_hx.plot_enhanced_schematic(result=res_main))
+        st.markdown("### Sıcaklık Profili")
+        st.pyplot(_hx.plot_temperature_profile(res_main))
+
+        st.download_button(
+            "Sonuç Raporunu İndir (.txt)",
+            report_text,
+            file_name="isi_degistirici_raporu.txt",
+        )
+        st.download_button(
+            "Sonuç Raporunu İndir (.pdf)",
+            build_calculation_report_pdf(report_context),
+            file_name="isi_degistirici_raporu.pdf",
+            mime="application/pdf",
+        )
+
+    with tab_crosscheck:
+        if pychemengg_warning:
+            st.info(pychemengg_warning)
+        df = pd.DataFrame([crosscheck_row(r, reference_q=res_main["Q [W]"]) for r in crosscheck_results])
+        st.table(df)
+
+    with tab_log:
+        st.markdown("### Hesaplama Logları")
+        st.code(log_text, language="log")
+
 
 st.set_page_config(page_title=APP_NAME, page_icon="🌡️", layout="wide")
+
+st.markdown(
+    """
+<style>
+    .stApp { background-color: #f8fafc; }
+    .stPlotlyChart, .stImage, .stTable, .stDataFrame {
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        background: white;
+        padding: 8px;
+        margin-bottom: 16px;
+    }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 8px 16px;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] { background-color: #1a5276; color: white; }
+    .stMetric { background: white; border-radius: 10px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+    .stAlert { border-radius: 10px; }
+    .stSidebar .stSelectbox, .stSidebar .stRadio, .stSidebar .stTextInput { margin-bottom: 8px; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 st.title(f"🌡️ {APP_NAME}")
 st.markdown("Modern ısı değiştirici termodinamik ve geometrik analiz aracı")
@@ -326,10 +466,20 @@ calc_purpose = st.sidebar.radio(
     CALC_PURPOSE_OPTIONS,
     index=safe_index(CALC_PURPOSE_OPTIONS, get_val("calc_purpose")),
 )
+# Eşanjör tipi seçimi
+exch_type_label = st.sidebar.selectbox(
+    "Eşanjör Tipi",
+    options=EXCH_TYPE_OPTIONS,
+    index=safe_index(EXCH_TYPE_OPTIONS, get_val("exch_type")),
+)
+exch_type_internal = EXCH_TYPE_INTERNAL[exch_type_label]
+
+# Akış tipini eşanjör tipine göre filtrele
+allowed_flow_labels = _get_allowed_flow_labels(exch_type_internal)
 flow_type = st.sidebar.selectbox(
     "Akış Konfigürasyonu",
-    options=FLOW_OPTIONS,
-    index=safe_index(FLOW_OPTIONS, get_val("flow_type")),
+    options=allowed_flow_labels,
+    index=safe_index(allowed_flow_labels, get_val("flow_type")),
 )
 solver_method = st.sidebar.selectbox(
     "Ana Çözücü Algoritması",
@@ -347,6 +497,7 @@ tab_inputs, tab_geom, tab_results, tab_crosscheck, tab_log = st.tabs(
 )
 
 current_data = {
+    "exch_type": exch_type_label,
     "calc_purpose": calc_purpose,
     "flow_type": flow_type,
     "solver_method": solver_method,
@@ -366,21 +517,25 @@ with tab_inputs:
         col_m_val, col_m_u = st.columns([2, 1])
         m_hot_raw = col_m_val.number_input("Sıcak Debi", min_value=0.001, value=float(get_val("m_hot")), step=0.5)
         u_m_hot = col_m_u.selectbox("Birim", ["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"], key="u_m_hot")
-        
+
         col_t_val, col_t_u = st.columns([2, 1])
         T_hot_in_raw = col_t_val.number_input("Sıcak Giriş", value=float(get_val("T_hot_in")), step=1.0)
         u_t_hot = col_t_u.selectbox("Birim", ["°C", "°F", "K"], key="u_t_hot")
 
         if calc_purpose == CALC_PURPOSE_OPTIONS[1]:
             col_to_val, col_to_u = st.columns([2, 1])
-            T_hot_out_opt_raw = col_to_val.number_input("Sıcak Çıkış", value=float(get_val("T_hot_out_opt") if get_val("T_hot_out_opt") != -999.0 else 200.0), step=1.0)
+            T_hot_out_opt_raw = col_to_val.number_input(
+                "Sıcak Çıkış",
+                value=float(get_val("T_hot_out_opt") if get_val("T_hot_out_opt") != -999.0 else 200.0),
+                step=1.0,
+            )
             u_t_hot_out = col_to_u.selectbox("Birim", ["°C", "°F", "K"], key="u_t_hot_out")
             T_hot_out_opt = to_celsius(T_hot_out_opt_raw, u_t_hot_out)
         else:
             T_hot_out_opt = -999.0
-            
+
         T_hot_in = to_celsius(T_hot_in_raw, u_t_hot)
-        m_hot = m_hot_raw # We will convert to kg/s later when density is known
+        m_hot = m_hot_raw  # We will convert to kg/s later when density is known
 
         hot_data = materialize_fluid_data(get_fluid_data(hot_fluid_sel), T_hot_in)
         for msg in hot_data.get("warnings", []):
@@ -405,8 +560,12 @@ with tab_inputs:
             cp_hot = st.number_input("Hot Cp (J/kg.K)", value=cp_hot)
             density_hot = st.number_input("Hot Density (kg/m³)", min_value=0.001, value=density_hot, format="%.3f")
             manual_hot = is_custom_manual_selection(hot_fluid_sel)
-            mu_hot = st.number_input("Hot Dynamic Viscosity (Pa.s)", value=mu_hot, format="%.6f", disabled=not manual_hot)
-            k_hot = st.number_input("Hot Thermal Conductivity (W/m.K)", value=k_hot, format="%.4f", disabled=not manual_hot)
+            mu_hot = st.number_input(
+                "Hot Dynamic Viscosity (Pa.s)", value=mu_hot, format="%.6f", disabled=not manual_hot
+            )
+            k_hot = st.number_input(
+                "Hot Thermal Conductivity (W/m.K)", value=k_hot, format="%.4f", disabled=not manual_hot
+            )
 
         current_data.update(
             {
@@ -433,21 +592,25 @@ with tab_inputs:
         col_mc_val, col_mc_u = st.columns([2, 1])
         m_cold_raw = col_mc_val.number_input("Soğuk Debi", min_value=0.001, value=float(get_val("m_cold")), step=0.5)
         u_m_cold = col_mc_u.selectbox("Birim", ["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"], key="u_m_cold")
-        
+
         col_tc_val, col_tc_u = st.columns([2, 1])
         T_cold_in_raw = col_tc_val.number_input("Soğuk Giriş", value=float(get_val("T_cold_in")), step=1.0)
         u_t_cold = col_tc_u.selectbox("Birim", ["°C", "°F", "K"], key="u_t_cold")
 
         if calc_purpose == CALC_PURPOSE_OPTIONS[1]:
             col_tco_val, col_tco_u = st.columns([2, 1])
-            T_cold_out_opt_raw = col_tco_val.number_input("Soğuk Çıkış", value=float(get_val("T_cold_out_opt") if get_val("T_cold_out_opt") != -999.0 else 200.0), step=1.0)
+            T_cold_out_opt_raw = col_tco_val.number_input(
+                "Soğuk Çıkış",
+                value=float(get_val("T_cold_out_opt") if get_val("T_cold_out_opt") != -999.0 else 200.0),
+                step=1.0,
+            )
             u_t_cold_out = col_tco_u.selectbox("Birim", ["°C", "°F", "K"], key="u_t_cold_out")
             T_cold_out_opt = to_celsius(T_cold_out_opt_raw, u_t_cold_out)
         else:
             T_cold_out_opt = -999.0
-            
+
         T_cold_in = to_celsius(T_cold_in_raw, u_t_cold)
-        m_cold = m_cold_raw # Will convert later
+        m_cold = m_cold_raw  # Will convert later
 
         cold_data = materialize_fluid_data(get_fluid_data(cold_fluid_sel), T_cold_in)
         for msg in cold_data.get("warnings", []):
@@ -470,12 +633,14 @@ with tab_inputs:
         elif not cold_data["is_coolprop"]:
             st.warning("Bu akışkanın özellikleri manuel girilmelidir")
             cp_cold = st.number_input("Cold Cp (J/kg.K)", value=cp_cold)
-            density_cold = st.number_input(
-                "Cold Density (kg/m³)", min_value=0.001, value=density_cold, format="%.3f"
-            )
+            density_cold = st.number_input("Cold Density (kg/m³)", min_value=0.001, value=density_cold, format="%.3f")
             manual_cold = is_custom_manual_selection(cold_fluid_sel)
-            mu_cold = st.number_input("Cold Dynamic Viscosity (Pa.s)", value=mu_cold, format="%.6f", disabled=not manual_cold)
-            k_cold = st.number_input("Cold Thermal Conductivity (W/m.K)", value=k_cold, format="%.4f", disabled=not manual_cold)
+            mu_cold = st.number_input(
+                "Cold Dynamic Viscosity (Pa.s)", value=mu_cold, format="%.6f", disabled=not manual_cold
+            )
+            k_cold = st.number_input(
+                "Cold Thermal Conductivity (W/m.K)", value=k_cold, format="%.4f", disabled=not manual_cold
+            )
 
         current_data.update(
             {
@@ -529,9 +694,7 @@ with tab_geom:
             geom_dict["L"] = L_m
             geom_dict["N_tubes"] = N_tubes
 
-            current_data.update(
-                {"D_o_mm": D_o_mm, "D_i_mm": D_i_mm, "L_m": L_m, "N_tubes": N_tubes}
-            )
+            current_data.update({"D_o_mm": D_o_mm, "D_i_mm": D_i_mm, "L_m": L_m, "N_tubes": N_tubes})
 
         with g2:
             mat_options = {
@@ -574,7 +737,9 @@ with tab_geom:
 
         with g3:
             if not FLOW_MAP[flow_type].startswith("cross"):
-                st.caption("Kanatçık alanı özellikle çapraz akış/finned tube ön tasarımı için anlamlıdır; counter/parallel modda hesaba katılmaz.")
+                st.caption(
+                    "Kanatçık alanı özellikle çapraz akış/finned tube ön tasarımı için anlamlıdır; counter/parallel modda hesaba katılmaz."
+                )
             is_finned_default = bool(get_val("is_finned"))
             is_finned = st.checkbox("Borular kanatçıklı mı?", value=is_finned_default)
             geom_dict["is_finned"] = is_finned
@@ -596,7 +761,9 @@ with tab_geom:
                 fin_type = st.selectbox(
                     "Kanat??k Tipi",
                     options=["Dairesel (Annular)", "Düz (Rectangular)"],
-                    index=safe_index(["Dairesel (Annular)", "Düz (Rectangular)"], get_val("fin_type") or "Dairesel (Annular)"),
+                    index=safe_index(
+                        ["Dairesel (Annular)", "Düz (Rectangular)"], get_val("fin_type") or "Dairesel (Annular)"
+                    ),
                 )
                 geom_dict["k_fin"] = 237.0 if "Alüminyum" in fin_material else 45.0
                 geom_dict["fin_type"] = "rectangular" if "Rectangular" in fin_type else "annular"
@@ -641,22 +808,26 @@ cold_fluid_obj = None
 
 if not hata_var:
     try:
-        if hot_data["is_coolprop"]:
+        if hot_data.get("is_iapws"):
+            hot_fluid_obj = Fluid(name=hot_data["name"], is_iapws=True, calc_temp_c=T_hot_in)
+        elif hot_data["is_coolprop"]:
             hot_fluid_obj = Fluid(name=hot_data["name"], is_coolprop=True, calc_temp_c=T_hot_in)
         else:
             hot_fluid_obj = build_manual_fluid(hot_data, cp_hot, density_hot, mu_hot, k_hot)
 
-        if cold_data["is_coolprop"]:
+        if cold_data.get("is_iapws"):
+            cold_fluid_obj = Fluid(name=cold_data["name"], is_iapws=True, calc_temp_c=T_cold_in)
+        elif cold_data["is_coolprop"]:
             cold_fluid_obj = Fluid(name=cold_data["name"], is_coolprop=True, calc_temp_c=T_cold_in)
         else:
             cold_fluid_obj = build_manual_fluid(cold_data, cp_cold, density_cold, mu_cold, k_cold)
-            
+
         # 1. Şimdi yoğunlukları bildiğimize göre debileri kg/s'e çevirelim
         rho_h = hot_fluid_obj.density
         rho_c = cold_fluid_obj.density
         m_hot = to_kg_s(m_hot_raw, u_m_hot, rho_h)
         m_cold = to_kg_s(m_cold_raw, u_m_cold, rho_c)
-        
+
     except Exception as exc:
         logger.exception("Fluid property preparation failed.")
         st.error(f"Akışkan özellikleri veya çevrim sırasında hata oluştu: {exc}")
@@ -664,23 +835,18 @@ if not hata_var:
         hata_var = True
 
 if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary"):
-    
     # --- Logging Setup for this Run ---
     log_stream = io.StringIO()
     handler = logging.StreamHandler(log_stream)
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%H:%M:%S'))
-    
-    # Root logger
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S"))
+
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
-    # Remove old in-memory Streamlit handlers to prevent duplicate lines on rerun.
-    # Keep the persistent file handler installed by logging_config.
     for h in root_logger.handlers[:]:
         if getattr(h, "_streamlit_run_handler", False):
             root_logger.removeHandler(h)
     handler._streamlit_run_handler = True
     root_logger.addHandler(handler)
-    # ----------------------------------
 
     with st.spinner("Termodinamik ve ısı transferi denklemleri çözülüyor..."):
         root_logger.info("Hesaplama başlatıldı.")
@@ -690,14 +856,15 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             U=1.0,
             A=1.0,
             flow_type=FLOW_MAP[flow_type],
+            exchanger_type=exch_type_internal,
         )
 
         geo_res = None
         if u_calc_mode == U_MODE_OPTIONS[1]:
-            if geom_dict['D_i'] >= geom_dict['D_o']:
+            if geom_dict["D_i"] >= geom_dict["D_o"]:
                 st.error("❌ Mantıksal Hata: Dış Çap, İç Çaptan büyük olmalıdır!")
                 st.stop()
-            if geom_dict['L'] <= 0 or geom_dict['N_tubes'] < 1:
+            if geom_dict["L"] <= 0 or geom_dict["N_tubes"] < 1:
                 st.error("❌ Mantıksal Hata: Boru boyu ve boru sayısı sıfırdan büyük olmalıdır!")
                 st.stop()
             try:
@@ -719,6 +886,53 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             res_ht = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
             res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
             crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+
+            for _iter in range(2):
+                t_ho = res_custom["T_hot_out [C]"]
+                t_co = res_custom["T_cold_out [C]"]
+                T_hot_mid = (T_hot_in + t_ho) / 2.0
+                T_cold_mid = (T_cold_in + t_co) / 2.0
+                if abs(T_hot_mid - T_hot_in) < 1.0 and abs(T_cold_mid - T_cold_in) < 1.0:
+                    break
+
+                hot_data_mid = materialize_fluid_data(get_fluid_data(hot_fluid_sel), T_hot_mid)
+                cold_data_mid = materialize_fluid_data(get_fluid_data(cold_fluid_sel), T_cold_mid)
+                if hot_data_mid.get("is_iapws"):
+                    hot_fluid_obj = Fluid(name=hot_data_mid["name"], is_iapws=True, calc_temp_c=T_hot_mid)
+                elif hot_data_mid["is_coolprop"]:
+                    hot_fluid_obj = Fluid(name=hot_data_mid["name"], is_coolprop=True, calc_temp_c=T_hot_mid)
+                else:
+                    hot_fluid_obj = build_manual_fluid(hot_data_mid, cp_hot, density_hot, mu_hot, k_hot)
+                if cold_data_mid.get("is_iapws"):
+                    cold_fluid_obj = Fluid(name=cold_data_mid["name"], is_iapws=True, calc_temp_c=T_cold_mid)
+                elif cold_data_mid["is_coolprop"]:
+                    cold_fluid_obj = Fluid(name=cold_data_mid["name"], is_coolprop=True, calc_temp_c=T_cold_mid)
+                else:
+                    cold_fluid_obj = build_manual_fluid(cold_data_mid, cp_cold, density_cold, mu_cold, k_cold)
+
+                m_hot = to_kg_s(m_hot_raw, u_m_hot, hot_fluid_obj.density)
+                m_cold = to_kg_s(m_cold_raw, u_m_cold, cold_fluid_obj.density)
+                hx = FinTubeHeatExchanger(
+                    hot_fluid_obj,
+                    cold_fluid_obj,
+                    U=1.0,
+                    A=1.0,
+                    flow_type=FLOW_MAP[flow_type],
+                    exchanger_type=exch_type_internal,
+                )
+                if u_calc_mode == U_MODE_OPTIONS[1]:
+                    geo_res = hx.calculate_geometric_U(geom_dict, m_hot, m_cold, hot_is_tube)
+                    U_value = geo_res["U"]
+                    Area = geo_res["A_total"]
+                else:
+                    hx.U = U_value
+                    hx.A = Area
+                res_custom = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
+                res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot_in, T_cold_in)
+                res_ht = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
+                res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
+                crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+
             pychemengg_warning = None
             try:
                 crosscheck_results.append(hx.solve_pychemengg_ntu(m_hot, m_cold, T_hot_in, T_cold_in))
@@ -747,108 +961,63 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 m_hot, m_cold, T_hot_in, T_cold_in, T_hot_out_opt, T_cold_out_opt
             )
 
-        with tab_results:
-            st.success("Hesaplamalar tamamlandı")
+        report_context = {
+            "methods": {
+                "Hesap amacı": calc_purpose,
+                "Akış tipi": flow_type,
+                "Akış tipi internal": FLOW_MAP[flow_type],
+                "Ana çözücü": solver_method,
+                "U modu": u_calc_mode,
+            },
+            "inputs": {
+                "m_hot_raw": f"{m_hot_raw} {u_m_hot}",
+                "m_cold_raw": f"{m_cold_raw} {u_m_cold}",
+                "m_hot_kg_s": m_hot,
+                "m_cold_kg_s": m_cold,
+                "T_hot_in_C": T_hot_in,
+                "T_cold_in_C": T_cold_in,
+                "T_hot_out_C": T_hot_out_opt if has_actual else None,
+                "T_cold_out_C": T_cold_out_opt if has_actual else None,
+                "U": U_value,
+                "A": Area,
+            },
+            "fluids": {
+                "hot": fluid_report_data(hot_fluid_sel, hot_data, hot_fluid_obj),
+                "cold": fluid_report_data(cold_fluid_sel, cold_data, cold_fluid_obj),
+            },
+            "geometry": geom_dict,
+            "geo_result": geo_res,
+            "results": {"main": res_main},
+            "actual_result": res_actual,
+            "crosscheck_results": crosscheck_results,
+        }
+        report_text = build_calculation_report(report_context)
 
-            if geo_res:
-                st.info(
-                    f"Geometrik Mod Sonucu: U = {U_value:.2f} W/m²K, Toplam Alan = {Area:.2f} m²"
-                )
-                for msg in geo_res.get("warnings", []):
-                    st.warning(msg)
-                c_u1, c_u2, c_u3 = st.columns(3)
-                c_u1.metric("İç Taşınım Katsayısı (h_i)", f"{geo_res['h_i']:.1f} W/m²K")
-                c_u2.metric("Dış Taşınım Katsayısı (h_o)", f"{geo_res['h_o']:.1f} W/m²K")
-                c_u3.metric("Kanatçık Verimi", f"% {geo_res.get('eta_fin', 1.0) * 100:.1f}")
+        calc_cache = {
+            "hx_data": {
+                "hot_name": hx.hot_fluid.name,
+                "cold_name": hx.cold_fluid.name,
+                "U": hx.U,
+                "A": hx.A,
+                "flow_type": hx.flow_type,
+                "exchanger_type": hx.exchanger_type,
+            },
+            "geo_res": geo_res,
+            "res_main": res_main,
+            "res_actual": res_actual,
+            "crosscheck_results": crosscheck_results,
+            "pychemengg_warning": pychemengg_warning,
+            "has_actual": has_actual,
+            "report_context": report_context,
+            "report_text": report_text,
+            "log_text": log_stream.getvalue(),
+            "U_value": U_value,
+            "Area": Area,
+            "u_t_hot": u_t_hot,
+            "u_t_cold": u_t_cold,
+        }
+        st.session_state.calc_cache = calc_cache
+        st.rerun()
 
-            if has_actual and res_actual:
-                st.markdown("### Performans Değerlendirmesi")
-                for msg in res_actual.get("warnings", []):
-                    st.warning(msg)
-                c_a1, c_a2, c_a3 = st.columns(3)
-                c_a1.metric("Sıcak Taraftan Atılan Isı", f"{res_actual['Q_hot [W]'] / 1000:.2f} kW")
-                c_a2.metric("Soğuk Tarafa Alınan Isı", f"{res_actual['Q_cold [W]'] / 1000:.2f} kW")
-                enerji_farki = abs(res_actual["Q_hot [W]"] - res_actual["Q_cold [W]"]) / max(
-                    abs(res_actual["Q_hot [W]"]), 1.0
-                ) * 100.0
-                c_a3.metric("Enerji Dengesi Sapması", f"% {enerji_farki:.2f}")
-
-                st.info(f"Gerçekleşen Effectiveness: %{res_actual['epsilon_actual'] * 100:.2f}")
-                st.warning(f"Gereken U Katsayısı: {res_actual['U_required']:.2f} W/m²K")
-            else:
-                st.markdown("### Sistem Tasarımı")
-                for msg in res_main.get("warnings", []):
-                    st.warning(msg)
-                
-                # Çıkış sıcaklıklarını kullanıcı birimlerine çevir
-                t_ho_disp = from_celsius(res_main['T_hot_out [C]'], u_t_hot)
-                t_co_disp = from_celsius(res_main['T_cold_out [C]'], u_t_cold)
-                
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("Tasarım Isı Yükü", f"{res_main['Q [W]'] / 1000:.2f} kW")
-                col_m2.metric("Sıcak Çıkış", f"{t_ho_disp:.2f} {u_t_hot}")
-                col_m3.metric("Soğuk Çıkış", f"{t_co_disp:.2f} {u_t_cold}")
-                st.info(f"Effectiveness: %{res_main.get('epsilon', 0.0) * 100:.2f}")
-
-            st.markdown("### Isı Değiştirici Akış Şeması")
-            st.pyplot(hx.plot_enhanced_schematic(result=res_main))
-            st.markdown("### SÄ±caklÄ±k Profili")
-            st.pyplot(hx.plot_temperature_profile(res_main))
-
-            report_context = {
-                "methods": {
-                    "Hesap amacı": calc_purpose,
-                    "Akış tipi": flow_type,
-                    "Akış tipi internal": FLOW_MAP[flow_type],
-                    "Ana çözücü": solver_method,
-                    "U modu": u_calc_mode,
-                },
-                "inputs": {
-                    "m_hot_raw": f"{m_hot_raw} {u_m_hot}",
-                    "m_cold_raw": f"{m_cold_raw} {u_m_cold}",
-                    "m_hot_kg_s": m_hot,
-                    "m_cold_kg_s": m_cold,
-                    "T_hot_in_C": T_hot_in,
-                    "T_cold_in_C": T_cold_in,
-                    "T_hot_out_C": T_hot_out_opt if has_actual else None,
-                    "T_cold_out_C": T_cold_out_opt if has_actual else None,
-                    "U": U_value,
-                    "A": Area,
-                },
-                "fluids": {
-                    "hot": fluid_report_data(hot_fluid_sel, hot_data, hot_fluid_obj),
-                    "cold": fluid_report_data(cold_fluid_sel, cold_data, cold_fluid_obj),
-                },
-                "geometry": geom_dict,
-                "geo_result": geo_res,
-                "results": {"main": res_main},
-                "actual_result": res_actual,
-                "crosscheck_results": crosscheck_results,
-            }
-            report_text = build_calculation_report(report_context)
-
-            st.download_button(
-                "Sonuç Raporunu İndir (.txt)",
-                report_text,
-                file_name="isi_degistirici_raporu.txt",
-            )
-
-            st.download_button(
-                "Sonuç Raporunu İndir (.pdf)",
-                build_calculation_report_pdf(report_context),
-                file_name="isi_degistirici_raporu.pdf",
-                mime="application/pdf",
-            )
-
-        with tab_crosscheck:
-            if pychemengg_warning:
-                st.info(pychemengg_warning)
-            df = pd.DataFrame(
-                [crosscheck_row(r, reference_q=res_main["Q [W]"]) for r in crosscheck_results]
-            )
-            st.table(df)
-
-        with tab_log:
-            st.markdown("### Hesaplama Logları")
-            log_text = log_stream.getvalue()
-            st.code(log_text, language="log")
+if "calc_cache" in st.session_state and not hata_var:
+    _render_calc_results(st.session_state.calc_cache, tab_results, tab_crosscheck, tab_log)

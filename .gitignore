@@ -3,7 +3,10 @@ __pycache__/
 build/
 dist/
 release/
-*.spec
 .streamlit/
 *.log
 *.tmp
+.venv/
+htmlcov/
+.coverage
+.coverage.*

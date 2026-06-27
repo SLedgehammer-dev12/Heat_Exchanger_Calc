@@ -1,0 +1,30 @@
+# Turkish (tr) translations for Heat Exchanger Calc
+# Copyright (C) 2026
+# This file is distributed under the same license as the project.
+msgid ""
+msgstr ""
+"Project-Id-Version: heat-exchanger-calc 0.2.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-05-29\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Sıcak akışkan debisi"
+msgstr "Hot fluid mass flow rate"
+
+msgid "Soğuk akışkan debisi"
+msgstr "Cold fluid mass flow rate"
+
+msgid "Giriş sıcaklıkları sonlu olmalıdır."
+msgstr "Inlet temperatures must be finite."
+
+msgid "Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır."
+msgstr "Hot fluid inlet temperature must be greater than cold fluid inlet temperature."
+
+msgid "Hesaplanan effectiveness fiziksel aralık dışında"
+msgstr "Calculated effectiveness outside physical range"
+
+msgid "Enerji dengesi sapması"
+msgstr "Energy balance deviation"

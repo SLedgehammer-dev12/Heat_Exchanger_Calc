@@ -1,39 +1,56 @@
-import sys
 import json
+import logging
 import os
-import numpy as np
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QFormLayout, QComboBox, QDoubleSpinBox, QPushButton, QCheckBox,
-                             QLabel, QTabWidget, QTableWidget, QTableWidgetItem, QMessageBox, 
-                             QGroupBox, QMenuBar, QAction, QFileDialog, QStackedWidget, QProgressBar)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import matplotlib.pyplot as plt
 
-from heat_exchanger import Fluid, FinTubeHeatExchanger
-from fluids_db import get_fluid_list_flat, get_fluid_data, get_mixture_fluid_data, materialize_fluid_data
-from reporting import build_calculation_report, build_calculation_report_pdf
-from updater import check_for_update, download_release_asset, default_download_dir
-from version import APP_NAME, VERSION
-from logging_config import setup_logging
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (
+    QAction,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config import EXCHANGER_ALLOWED_FLOWS
 from engineering_utils import (
     fluid_report_data,
-    from_celsius,
-    result_warnings,
     to_celsius,
     to_kg_s,
 )
-
-import logging
-from PyQt5.QtCore import QObject, pyqtSignal, QThread
+from exceptions import InvalidGeometryError, InvalidInputError
+from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
+from heat_exchanger import FinTubeHeatExchanger, Fluid
+from logging_config import setup_logging
+from reporting import build_calculation_report, build_calculation_report_pdf
+from updater import check_for_update, default_download_dir, download_release_asset
+from version import APP_NAME, VERSION
 
 LOG_FILE = setup_logging("desktop")
 logger = logging.getLogger(__name__)
 
+
 class QLogHandler(logging.Handler, QObject):
     log_signal = pyqtSignal(str, int)
-    
+
     def __init__(self):
         logging.Handler.__init__(self)
         QObject.__init__(self)
@@ -90,17 +107,16 @@ class UpdateCheckWorker(QObject):
     def run(self):
         self.finished.emit(check_for_update(), self.show_no_update)
 
-from PyQt5.QtWidgets import QDialog, QHeaderView
-
 
 def create_unit_combo(items):
     c = QComboBox()
     c.addItems(items)
     return c
 
+
 def create_input_row(spin, combo):
     lay = QHBoxLayout()
-    lay.setContentsMargins(0,0,0,0)
+    lay.setContentsMargins(0, 0, 0, 0)
     lay.addWidget(spin)
     lay.addWidget(combo)
     lay.setStretch(0, 3)
@@ -110,12 +126,15 @@ def create_input_row(spin, combo):
     return w
 
 
-
 def build_fluid_from_selection(selection, fluid_data, mixture_data, mixture_basis, temp_c, mu, k_cond):
+    if fluid_data.get("is_iapws"):
+        return Fluid(name=fluid_data["name"], is_iapws=True, calc_temp_c=temp_c)
     if fluid_data["is_coolprop"]:
         return Fluid(name=fluid_data["name"], is_coolprop=True, calc_temp_c=temp_c)
     if fluid_data.get("is_mixture"):
-        logger.info("Calculating exhaust mixture properties. fluid=%s basis=%s comp=%s", selection, mixture_basis, mixture_data)
+        logger.info(
+            "Calculating exhaust mixture properties. fluid=%s basis=%s comp=%s", selection, mixture_basis, mixture_data
+        )
         mix = get_mixture_fluid_data(mixture_data, comp_type=mixture_basis, T_c=temp_c, P_pa=101325.0)
         fluid = Fluid(
             name="Özel Egzoz Gazı",
@@ -148,31 +167,48 @@ def compute_desktop_calculation(snapshot):
     T_hot = to_celsius(snapshot["T_hot_raw"], snapshot["T_hot_unit"])
     T_cold = to_celsius(snapshot["T_cold_raw"], snapshot["T_cold_unit"])
     if T_hot <= T_cold:
-        raise ValueError("Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır.")
+        raise InvalidInputError("Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır.")
 
     hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot)
     cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold)
     hot_fluid = build_fluid_from_selection(
-        snapshot["hot_selection"], hot_data, snapshot["hot_mixture_data"],
-        snapshot["hot_mixture_basis"], T_hot, snapshot["mu_hot"], snapshot["k_hot"]
+        snapshot["hot_selection"],
+        hot_data,
+        snapshot["hot_mixture_data"],
+        snapshot["hot_mixture_basis"],
+        T_hot,
+        snapshot["mu_hot"],
+        snapshot["k_hot"],
     )
     cold_fluid = build_fluid_from_selection(
-        snapshot["cold_selection"], cold_data, snapshot["cold_mixture_data"],
-        snapshot["cold_mixture_basis"], T_cold, snapshot["mu_cold"], snapshot["k_cold"]
+        snapshot["cold_selection"],
+        cold_data,
+        snapshot["cold_mixture_data"],
+        snapshot["cold_mixture_basis"],
+        T_cold,
+        snapshot["mu_cold"],
+        snapshot["k_cold"],
     )
 
     m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
     m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
-    hx = FinTubeHeatExchanger(hot_fluid, cold_fluid, U=1.0, A=1.0, flow_type=snapshot["flow_type"])
+    hx = FinTubeHeatExchanger(
+        hot_fluid,
+        cold_fluid,
+        U=1.0,
+        A=1.0,
+        flow_type=snapshot["flow_type"],
+        exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
+    )
 
     geo_res = None
     geom = {}
     if "Geometrik" in snapshot["u_mode"]:
         geom = dict(snapshot["geom"])
         if geom["D_i"] >= geom["D_o"]:
-            raise ValueError("Boru dış çapı iç çapından büyük olmalıdır.")
+            raise InvalidGeometryError("Boru dış çapı iç çapından büyük olmalıdır.")
         if geom["L"] <= 0 or geom["N_tubes"] < 1:
-            raise ValueError("Geometrik uzunluk ve adet sıfırdan büyük olmalıdır.")
+            raise InvalidGeometryError("Geometrik uzunluk ve adet sıfırdan büyük olmalıdır.")
         geo_res = hx.calculate_geometric_U(geom, m_hot, m_cold, snapshot["hot_is_tube"])
         hx.U = geo_res["U"]
         hx.A = geo_res["A_total"]
@@ -185,6 +221,61 @@ def compute_desktop_calculation(snapshot):
     res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="ht")
     res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source="ht")
     crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+
+    # Iterative property refinement at midpoint temperatures (2 additional passes)
+    for _iter in range(2):
+        t_ho = res_custom["T_hot_out [C]"]
+        t_co = res_custom["T_cold_out [C]"]
+        T_hot_mid = (T_hot + t_ho) / 2.0
+        T_cold_mid = (T_cold + t_co) / 2.0
+        if abs(T_hot_mid - T_hot) < 1.0 and abs(T_cold_mid - T_cold) < 1.0:
+            break
+
+        hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot_mid)
+        cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold_mid)
+        hot_fluid = build_fluid_from_selection(
+            snapshot["hot_selection"],
+            hot_data,
+            snapshot["hot_mixture_data"],
+            snapshot["hot_mixture_basis"],
+            T_hot_mid,
+            snapshot["mu_hot"],
+            snapshot["k_hot"],
+        )
+        cold_fluid = build_fluid_from_selection(
+            snapshot["cold_selection"],
+            cold_data,
+            snapshot["cold_mixture_data"],
+            snapshot["cold_mixture_basis"],
+            T_cold_mid,
+            snapshot["mu_cold"],
+            snapshot["k_cold"],
+        )
+        m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
+        m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
+        hx = FinTubeHeatExchanger(
+            hot_fluid,
+            cold_fluid,
+            U=1.0,
+            A=1.0,
+            flow_type=snapshot["flow_type"],
+            exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
+        )
+        if geo_res is not None:
+            geo_res = hx.calculate_geometric_U(geom, m_hot, m_cold, snapshot["hot_is_tube"])
+            hx.U = geo_res["U"]
+            hx.A = geo_res["A_total"]
+        else:
+            hx.U = snapshot["U"]
+            hx.A = snapshot["A"]
+        res_custom = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="custom")
+        res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot, T_cold)
+        res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="ht")
+        res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source="ht")
+        crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+        logger.debug("Midpoint iteration %d: Tho=%.1f Tco=%.1f", _iter + 1, t_ho, t_co)
+    # End of iterative property refinement
+
     pychemengg_warning = None
     try:
         crosscheck_results.append(hx.solve_pychemengg_ntu(m_hot, m_cold, T_hot, T_cold))
@@ -252,23 +343,32 @@ def compute_desktop_calculation(snapshot):
         "t_out_c": t_out_c,
     }
 
+
 class CompositionDialog(QDialog):
     def __init__(self, parent=None, current_comp=None, current_basis="mole"):
         super().__init__(parent)
-        self.setWindowTitle('Egzoz Gazı Kompozisyonu Düzenleyici')
+        self.setWindowTitle("Egzoz Gazı Kompozisyonu Düzenleyici")
         self.resize(500, 400)
-        
+
         self.layout = QVBoxLayout(self)
-        
+
         # Presets
         preset_layout = QHBoxLayout()
-        btn_ng = QPushButton('Doğal Gaz (Tipik)')
-        btn_ng.clicked.connect(lambda: self.load_preset({'Nitrogen': 75.0, 'Oxygen': 13.0, 'Water': 8.0, 'CarbonDioxide': 4.0}))
-        btn_coal = QPushButton('Kömür (Ağır)')
-        btn_coal.clicked.connect(lambda: self.load_preset({'Nitrogen': 72.0, 'Oxygen': 6.0, 'Water': 6.0, 'CarbonDioxide': 15.0, 'SulfurDioxide': 1.0}))
-        btn_bio = QPushButton('Biyogaz')
-        btn_bio.clicked.connect(lambda: self.load_preset({'Nitrogen': 65.0, 'Oxygen': 5.0, 'Water': 15.0, 'CarbonDioxide': 15.0}))
-        
+        btn_ng = QPushButton("Doğal Gaz (Tipik)")
+        btn_ng.clicked.connect(
+            lambda: self.load_preset({"Nitrogen": 75.0, "Oxygen": 13.0, "Water": 8.0, "CarbonDioxide": 4.0})
+        )
+        btn_coal = QPushButton("Kömür (Ağır)")
+        btn_coal.clicked.connect(
+            lambda: self.load_preset(
+                {"Nitrogen": 72.0, "Oxygen": 6.0, "Water": 6.0, "CarbonDioxide": 15.0, "SulfurDioxide": 1.0}
+            )
+        )
+        btn_bio = QPushButton("Biyogaz")
+        btn_bio.clicked.connect(
+            lambda: self.load_preset({"Nitrogen": 65.0, "Oxygen": 5.0, "Water": 15.0, "CarbonDioxide": 15.0})
+        )
+
         preset_layout.addWidget(btn_ng)
         preset_layout.addWidget(btn_coal)
         preset_layout.addWidget(btn_bio)
@@ -279,56 +379,66 @@ class CompositionDialog(QDialog):
         self.combo_basis.setCurrentText("Kütlesel yüzde (%)" if current_basis == "mass" else "Molar yüzde (%)")
         self.layout.addWidget(QLabel("Kompozisyon Bazı"))
         self.layout.addWidget(self.combo_basis)
-        
+
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['Gaz Bileşeni', 'Oran (%)'])
+        self.table.setHorizontalHeaderLabels(["Gaz Bileşeni", "Oran (%)"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.table)
-        
+
         btn_layout = QHBoxLayout()
-        btn_add = QPushButton('+ Satır Ekle')
+        btn_add = QPushButton("+ Satır Ekle")
         btn_add.clicked.connect(self.add_row)
-        btn_rem = QPushButton('- Seçili Satırı Sil')
+        btn_rem = QPushButton("- Seçili Satırı Sil")
         btn_rem.clicked.connect(self.remove_row)
         btn_layout.addWidget(btn_add)
         btn_layout.addWidget(btn_rem)
         self.layout.addLayout(btn_layout)
-        
-        save_btn = QPushButton('Kaydet ve Çık')
-        save_btn.setStyleSheet('background-color: #27ae60; color: white; font-weight: bold; padding: 8px;')
+
+        save_btn = QPushButton("Kaydet ve Çık")
+        save_btn.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold; padding: 8px;")
         save_btn.clicked.connect(self.accept)
         self.layout.addWidget(save_btn)
-        
-        self.gases = ['Nitrogen', 'Oxygen', 'CarbonDioxide', 'Water', 'Argon', 'CarbonMonoxide', 'Methane', 'Hydrogen', 'SulfurDioxide']
-        
+
+        self.gases = [
+            "Nitrogen",
+            "Oxygen",
+            "CarbonDioxide",
+            "Water",
+            "Argon",
+            "CarbonMonoxide",
+            "Methane",
+            "Hydrogen",
+            "SulfurDioxide",
+        ]
+
         if current_comp:
             self.load_preset(current_comp)
         else:
-            self.load_preset({'Nitrogen': 76.0, 'Oxygen': 11.0, 'Water': 6.0, 'CarbonDioxide': 7.0})
-            
+            self.load_preset({"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0})
+
     def load_preset(self, comp_dict):
         self.table.setRowCount(0)
         for gas, val in comp_dict.items():
             self.add_row(gas, val)
-            
-    def add_row(self, gas_name='Nitrogen', val=0.0):
+
+    def add_row(self, gas_name="Nitrogen", val=0.0):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        
+
         combo = QComboBox()
         combo.addItems(self.gases)
         if gas_name in self.gases:
             combo.setCurrentText(gas_name)
         self.table.setCellWidget(row, 0, combo)
-        
+
         item_val = QTableWidgetItem(str(val))
         self.table.setItem(row, 1, item_val)
-        
+
     def remove_row(self):
         row = self.table.currentRow()
         if row >= 0:
             self.table.removeRow(row)
-            
+
     def get_composition(self):
         comp = {}
         for r in range(self.table.rowCount()):
@@ -350,7 +460,6 @@ class CompositionDialog(QDialog):
         return "mass" if "Kütlesel" in self.combo_basis.currentText() else "mole"
 
 
-
 FLOW_LABEL_TO_INTERNAL = {
     "Çapraz Akış (Cross Flow Unmixed)": "cross_unmixed",
     "Ters Akış (Counter Flow)": "counter",
@@ -358,6 +467,13 @@ FLOW_LABEL_TO_INTERNAL = {
 }
 FLOW_LABEL_TO_INTERNAL["Çapraz Akış (Mixed/Unmixed)"] = "cross_mixed_unmixed"
 FLOW_INTERNAL_TO_LABEL = {value: key for key, value in FLOW_LABEL_TO_INTERNAL.items()}
+
+EXCHANGER_LABEL_TO_INTERNAL = {
+    "Kanatçıklı Boru (Finned Tube)": "finned_tube",
+    "Gövde-Boru (Shell & Tube)": "shell_and_tube",
+    "Çift Borulu (Double Pipe)": "double_pipe",
+}
+EXCHANGER_INTERNAL_TO_LABEL = {value: key for key, value in EXCHANGER_LABEL_TO_INTERNAL.items()}
 
 LOAD_KEY_ALIASES = {
     "calc_purpose": "purpose",
@@ -394,6 +510,21 @@ def normalize_loaded_data(data):
         normalized["flow_type"] = FLOW_LABEL_TO_INTERNAL[flow_value]
     if normalized.get("u_mode") == "Geometrik Mod (Malzeme ve Çap ile Hesapla)":
         normalized["u_mode"] = "Geometrik Mod (Malzeme ile Hesapla)"
+    exch_value = normalized.get("exchanger_type")
+    if exch_value in EXCHANGER_LABEL_TO_INTERNAL:
+        normalized["exchanger_type"] = EXCHANGER_LABEL_TO_INTERNAL[exch_value]
+    # Akış tipini eşanjör tipine göre doğrula
+    exch_internal = normalized.get("exchanger_type", "finned_tube")
+    allowed = EXCHANGER_ALLOWED_FLOWS.get(exch_internal, set())
+    flow = normalized.get("flow_type")
+    if flow and flow not in allowed and allowed:
+        logger.warning(
+            "Yüklenen akış tipi '%s', eşanjör tipi '%s' için geçersiz; '%s' kullanılacak.",
+            flow,
+            exch_internal,
+            next(iter(allowed)),
+        )
+        normalized["flow_type"] = next(iter(allowed))
     return normalized
 
 
@@ -415,118 +546,143 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.qt_log_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S"))
         self.qt_log_handler.log_signal.connect(self.append_log)
         logging.getLogger().addHandler(self.qt_log_handler)
-        
+
     def initUI(self):
         # Menu Bar for Save/Load
         menubar = self.menuBar()
-        fileMenu = menubar.addMenu('&Dosya')
-        
-        saveAct = QAction('💾 Kaydet', self)
-        saveAct.setShortcut('Ctrl+S')
+        fileMenu = menubar.addMenu("&Dosya")
+
+        saveAct = QAction("💾 Kaydet", self)
+        saveAct.setShortcut("Ctrl+S")
         saveAct.triggered.connect(self.save_data)
         fileMenu.addAction(saveAct)
-        
-        loadAct = QAction('📂 Yükle', self)
-        loadAct.setShortcut('Ctrl+O')
+
+        loadAct = QAction("📂 Yükle", self)
+        loadAct.setShortcut("Ctrl+O")
         loadAct.triggered.connect(self.load_data)
         fileMenu.addAction(loadAct)
 
-        helpMenu = menubar.addMenu('&Yardım')
-        updateAct = QAction('Güncellemeyi Kontrol Et', self)
+        helpMenu = menubar.addMenu("&Yardım")
+        updateAct = QAction("Güncellemeyi Kontrol Et", self)
         updateAct.triggered.connect(lambda: self.check_for_updates(show_no_update=True))
         helpMenu.addAction(updateAct)
 
-        logAct = QAction('Log Klasörünü Aç', self)
+        logAct = QAction("Log Klasörünü Aç", self)
         logAct.triggered.connect(self.open_log_folder)
         helpMenu.addAction(logAct)
 
-        aboutAct = QAction('Hakkında', self)
-        aboutAct.triggered.connect(lambda: QMessageBox.information(
-            self,
-            "Hakkında",
-            f"{APP_NAME} v{VERSION}\nFin-tube heat exchanger calculation and reporting tool."
-        ))
+        aboutAct = QAction("Hakkında", self)
+        aboutAct.triggered.connect(
+            lambda: QMessageBox.information(
+                self, "Hakkında", f"{APP_NAME} v{VERSION}\nFin-tube heat exchanger calculation and reporting tool."
+            )
+        )
         helpMenu.addAction(aboutAct)
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
-        
+
         # --- SOL PANEL ---
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_panel.setMaximumWidth(450)
-        
+
         # 1. Konfigürasyon
         group_config = QGroupBox("⚙️ Ayarlar")
         form_config = QFormLayout(group_config)
         self.combo_flow = QComboBox()
         self.combo_flow.addItems(list(FLOW_LABEL_TO_INTERNAL.keys()))
-        
+
         self.combo_method = QComboBox()
-        self.combo_method.addItems(['Kendi Algoritmamız (Epsilon-NTU)', 'Kendi Algoritmamız (LMTD)', 'HT Kütüphanesi (Epsilon-NTU)', 'HT Kütüphanesi (LMTD)'])
-        
+        self.combo_method.addItems(
+            [
+                "Kendi Algoritmamız (Epsilon-NTU)",
+                "Kendi Algoritmamız (LMTD)",
+                "HT Kütüphanesi (Epsilon-NTU)",
+                "HT Kütüphanesi (LMTD)",
+            ]
+        )
+
         self.combo_purpose = QComboBox()
-        self.combo_purpose.addItems(['Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)', 'Performans Değerlendirmesi (Verim Bul)'])
+        self.combo_purpose.addItems(
+            ["Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)", "Performans Değerlendirmesi (Verim Bul)"]
+        )
         self.combo_purpose.currentTextChanged.connect(self.toggle_purpose)
-        
+
         self.combo_u_mode = QComboBox()
-        self.combo_u_mode.addItems(['Basit Mod (Manuel U Değeri)', 'Geometrik Mod (Malzeme ile Hesapla)'])
+        self.combo_u_mode.addItems(["Basit Mod (Manuel U Değeri)", "Geometrik Mod (Malzeme ile Hesapla)"])
         self.combo_u_mode.currentTextChanged.connect(self.toggle_u_mode)
-        
+
         form_config.addRow("Hesap Amacı:", self.combo_purpose)
         form_config.addRow("Akış Tipi:", self.combo_flow)
         form_config.addRow("Ana Çözücü Alg.:", self.combo_method)
         form_config.addRow("U Modu:", self.combo_u_mode)
         left_layout.addWidget(group_config)
-        
+
         fluid_list = get_fluid_list_flat()
-        
+
         # 2. Sıcak Akışkan
         group_hot = QGroupBox("🔴 Sıcak Akışkan")
         form_hot = QFormLayout(group_hot)
         self.combo_hot = QComboBox()
         self.combo_hot.addItems(fluid_list)
         self.combo_hot.setCurrentText("Doğal Gaz Türbin Egzoz Gazı (Manuel)")
-        
+
         self.btn_edit_comp = QPushButton("🔧 Kompozisyon Düzenle")
         self.btn_edit_comp.setStyleSheet("background-color: #3498db; color: white; font-weight: bold;")
         self.btn_edit_comp.clicked.connect(self.open_composition_editor)
         self.btn_edit_comp.hide()
-        
-        self.combo_hot.currentTextChanged.connect(self.toggle_hot_fluid)
-        self.hot_mixture_data = {'Nitrogen': 76.0, 'Oxygen': 11.0, 'Water': 6.0, 'CarbonDioxide': 7.0}
-        self.hot_mixture_basis = "mole"
-        
-        self.spin_m_hot = QDoubleSpinBox(); self.spin_m_hot.setRange(0.001, 100000); self.spin_m_hot.setValue(15.0)
-        self.combo_u_m_hot = create_unit_combo(["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"])
-        self.spin_t_hot = QDoubleSpinBox(); self.spin_t_hot.setRange(-9999.0, 9999.0); self.spin_t_hot.setValue(450.0)
-        self.combo_u_t_hot = create_unit_combo(["°C", "°F", "K"])
-        self.spin_t_hot_out = QDoubleSpinBox(); self.spin_t_hot_out.setRange(-9999.0, 9999.0); self.spin_t_hot_out.setValue(-999.0)
-        self.combo_u_t_hot_out = create_unit_combo(["°C", "°F", "K"])
-        
-        # Manuel Özellikler
-        self.spin_mu_hot = QDoubleSpinBox(); self.spin_mu_hot.setRange(0.000001, 1000); self.spin_mu_hot.setDecimals(6); self.spin_mu_hot.setValue(0.00002); self.spin_mu_hot.setSuffix(" Pa.s")
-        self.spin_k_hot = QDoubleSpinBox(); self.spin_k_hot.setRange(0.001, 1000); self.spin_k_hot.setDecimals(4); self.spin_k_hot.setValue(0.03); self.spin_k_hot.setSuffix(" W/mK")
 
-        
+        self.combo_hot.currentTextChanged.connect(self.toggle_hot_fluid)
+        self.hot_mixture_data = {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0}
+        self.hot_mixture_basis = "mole"
+
+        self.spin_m_hot = QDoubleSpinBox()
+        self.spin_m_hot.setRange(0.001, 100000)
+        self.spin_m_hot.setValue(15.0)
+        self.combo_u_m_hot = create_unit_combo(["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"])
+        self.spin_t_hot = QDoubleSpinBox()
+        self.spin_t_hot.setRange(-9999.0, 9999.0)
+        self.spin_t_hot.setValue(450.0)
+        self.combo_u_t_hot = create_unit_combo(["°C", "°F", "K"])
+        self.spin_t_hot_out = QDoubleSpinBox()
+        self.spin_t_hot_out.setRange(-9999.0, 9999.0)
+        self.spin_t_hot_out.setValue(-999.0)
+        self.combo_u_t_hot_out = create_unit_combo(["°C", "°F", "K"])
+
+        # Manuel Özellikler
+        self.spin_mu_hot = QDoubleSpinBox()
+        self.spin_mu_hot.setRange(0.000001, 1000)
+        self.spin_mu_hot.setDecimals(6)
+        self.spin_mu_hot.setValue(0.00002)
+        self.spin_mu_hot.setSuffix(" Pa.s")
+        self.spin_k_hot = QDoubleSpinBox()
+        self.spin_k_hot.setRange(0.001, 1000)
+        self.spin_k_hot.setDecimals(4)
+        self.spin_k_hot.setValue(0.03)
+        self.spin_k_hot.setSuffix(" W/mK")
+
         form_hot.addRow("Akışkan:", self.combo_hot)
         form_hot.addRow("", self.btn_edit_comp)
         form_hot.addRow("Debi:", create_input_row(self.spin_m_hot, self.combo_u_m_hot))
         form_hot.addRow("Giriş Sıc.:", create_input_row(self.spin_t_hot, self.combo_u_t_hot))
         self.lbl_t_hot_out = QLabel("Çıkış Sıc.:")
-        
-        lay_hout = QHBoxLayout(); lay_hout.setContentsMargins(0,0,0,0)
+
+        lay_hout = QHBoxLayout()
+        lay_hout.setContentsMargins(0, 0, 0, 0)
         lay_hout.addWidget(self.spin_t_hot_out)
         lay_hout.addWidget(self.combo_u_t_hot_out)
-        lay_hout.setStretch(0, 3); lay_hout.setStretch(1, 1)
-        self.w_t_hot_out = QWidget(); self.w_t_hot_out.setLayout(lay_hout)
-        
+        lay_hout.setStretch(0, 3)
+        lay_hout.setStretch(1, 1)
+        self.w_t_hot_out = QWidget()
+        self.w_t_hot_out.setLayout(lay_hout)
+
         form_hot.addRow(self.lbl_t_hot_out, self.w_t_hot_out)
         form_hot.addRow("Manuel Viskozite:", self.spin_mu_hot)
         form_hot.addRow("Manuel İletkenlik:", self.spin_k_hot)
         left_layout.addWidget(group_hot)
-        
+
         # 3. Soğuk Akışkan
         group_cold = QGroupBox("🔵 Soğuk Akışkan")
         form_cold = QFormLayout(group_cold)
@@ -539,78 +695,139 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.btn_edit_comp_cold.clicked.connect(self.open_cold_composition_editor)
         self.btn_edit_comp_cold.hide()
         self.combo_cold.currentTextChanged.connect(self.toggle_cold_fluid)
-        self.cold_mixture_data = {'Nitrogen': 76.0, 'Oxygen': 11.0, 'Water': 6.0, 'CarbonDioxide': 7.0}
+        self.cold_mixture_data = {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0}
         self.cold_mixture_basis = "mole"
-        
-        self.spin_m_cold = QDoubleSpinBox(); self.spin_m_cold.setRange(0.001, 100000); self.spin_m_cold.setValue(5.0)
+
+        self.spin_m_cold = QDoubleSpinBox()
+        self.spin_m_cold.setRange(0.001, 100000)
+        self.spin_m_cold.setValue(5.0)
         self.combo_u_m_cold = create_unit_combo(["kg/s", "kg/h", "lb/s", "m³/s", "m³/h", "CFM"])
-        self.spin_t_cold = QDoubleSpinBox(); self.spin_t_cold.setRange(-9999.0, 9999.0); self.spin_t_cold.setValue(120.0)
+        self.spin_t_cold = QDoubleSpinBox()
+        self.spin_t_cold.setRange(-9999.0, 9999.0)
+        self.spin_t_cold.setValue(120.0)
         self.combo_u_t_cold = create_unit_combo(["°C", "°F", "K"])
-        self.spin_t_cold_out = QDoubleSpinBox(); self.spin_t_cold_out.setRange(-9999.0, 9999.0); self.spin_t_cold_out.setValue(-999.0)
+        self.spin_t_cold_out = QDoubleSpinBox()
+        self.spin_t_cold_out.setRange(-9999.0, 9999.0)
+        self.spin_t_cold_out.setValue(-999.0)
         self.combo_u_t_cold_out = create_unit_combo(["°C", "°F", "K"])
-        
-        self.spin_mu_cold = QDoubleSpinBox(); self.spin_mu_cold.setRange(0.000001, 1000); self.spin_mu_cold.setDecimals(6); self.spin_mu_cold.setValue(0.001); self.spin_mu_cold.setSuffix(" Pa.s")
-        self.spin_k_cold = QDoubleSpinBox(); self.spin_k_cold.setRange(0.001, 1000); self.spin_k_cold.setDecimals(4); self.spin_k_cold.setValue(0.15); self.spin_k_cold.setSuffix(" W/mK")
-        
+
+        self.spin_mu_cold = QDoubleSpinBox()
+        self.spin_mu_cold.setRange(0.000001, 1000)
+        self.spin_mu_cold.setDecimals(6)
+        self.spin_mu_cold.setValue(0.001)
+        self.spin_mu_cold.setSuffix(" Pa.s")
+        self.spin_k_cold = QDoubleSpinBox()
+        self.spin_k_cold.setRange(0.001, 1000)
+        self.spin_k_cold.setDecimals(4)
+        self.spin_k_cold.setValue(0.15)
+        self.spin_k_cold.setSuffix(" W/mK")
+
         form_cold.addRow("Akışkan:", self.combo_cold)
         form_cold.addRow("", self.btn_edit_comp_cold)
         form_cold.addRow("Debi:", create_input_row(self.spin_m_cold, self.combo_u_m_cold))
         form_cold.addRow("Giriş Sıc.:", create_input_row(self.spin_t_cold, self.combo_u_t_cold))
         self.lbl_t_cold_out = QLabel("Çıkış Sıc.:")
-        
-        lay_cout = QHBoxLayout(); lay_cout.setContentsMargins(0,0,0,0)
+
+        lay_cout = QHBoxLayout()
+        lay_cout.setContentsMargins(0, 0, 0, 0)
         lay_cout.addWidget(self.spin_t_cold_out)
         lay_cout.addWidget(self.combo_u_t_cold_out)
-        lay_cout.setStretch(0, 3); lay_cout.setStretch(1, 1)
-        self.w_t_cold_out = QWidget(); self.w_t_cold_out.setLayout(lay_cout)
-        
+        lay_cout.setStretch(0, 3)
+        lay_cout.setStretch(1, 1)
+        self.w_t_cold_out = QWidget()
+        self.w_t_cold_out.setLayout(lay_cout)
+
         form_cold.addRow(self.lbl_t_cold_out, self.w_t_cold_out)
         form_cold.addRow("Manuel Viskozite:", self.spin_mu_cold)
         form_cold.addRow("Manuel İletkenlik:", self.spin_k_cold)
         left_layout.addWidget(group_cold)
-        
+
         # 4. U Modu Stack
         self.stack_geom = QStackedWidget()
-        
+
         # 4.a Basit Mod
         page_simple = QWidget()
         form_simple = QFormLayout(page_simple)
-        self.spin_U = QDoubleSpinBox(); self.spin_U.setRange(0.1, 10000); self.spin_U.setValue(50.0); self.spin_U.setSuffix(" W/m²K")
-        self.spin_A = QDoubleSpinBox(); self.spin_A.setRange(0.1, 100000); self.spin_A.setValue(200.0); self.spin_A.setSuffix(" m²")
+        self.spin_U = QDoubleSpinBox()
+        self.spin_U.setRange(0.1, 10000)
+        self.spin_U.setValue(50.0)
+        self.spin_U.setSuffix(" W/m²K")
+        self.spin_A = QDoubleSpinBox()
+        self.spin_A.setRange(0.1, 100000)
+        self.spin_A.setValue(200.0)
+        self.spin_A.setSuffix(" m²")
         form_simple.addRow("U Katsayısı:", self.spin_U)
         form_simple.addRow("Toplam Alan:", self.spin_A)
         self.stack_geom.addWidget(page_simple)
-        
+
         # 4.b Geometrik Mod
         page_geo = QWidget()
         form_geo = QFormLayout(page_geo)
-        
-        self.spin_do = QDoubleSpinBox(); self.spin_do.setRange(1, 1000); self.spin_do.setValue(25.4); self.spin_do.setSuffix(" mm")
-        self.spin_di = QDoubleSpinBox(); self.spin_di.setRange(1, 1000); self.spin_di.setValue(21.1); self.spin_di.setSuffix(" mm")
-        self.spin_l = QDoubleSpinBox(); self.spin_l.setRange(0.1, 100); self.spin_l.setValue(3.0); self.spin_l.setSuffix(" m")
-        self.spin_nt = QDoubleSpinBox(); self.spin_nt.setRange(1, 10000); self.spin_nt.setValue(100); self.spin_nt.setDecimals(0)
-        self.spin_d_shell = QDoubleSpinBox(); self.spin_d_shell.setRange(1, 5000); self.spin_d_shell.setValue(50.0); self.spin_d_shell.setSuffix(" mm")
-        self.spin_rf_i = QDoubleSpinBox(); self.spin_rf_i.setRange(0, 1); self.spin_rf_i.setDecimals(6); self.spin_rf_i.setValue(0.0); self.spin_rf_i.setSuffix(" m2K/W")
-        self.spin_rf_o = QDoubleSpinBox(); self.spin_rf_o.setRange(0, 1); self.spin_rf_o.setDecimals(6); self.spin_rf_o.setValue(0.0); self.spin_rf_o.setSuffix(" m2K/W")
-        
+
+        self.spin_do = QDoubleSpinBox()
+        self.spin_do.setRange(1, 1000)
+        self.spin_do.setValue(25.4)
+        self.spin_do.setSuffix(" mm")
+        self.spin_di = QDoubleSpinBox()
+        self.spin_di.setRange(1, 1000)
+        self.spin_di.setValue(21.1)
+        self.spin_di.setSuffix(" mm")
+        self.spin_l = QDoubleSpinBox()
+        self.spin_l.setRange(0.1, 100)
+        self.spin_l.setValue(3.0)
+        self.spin_l.setSuffix(" m")
+        self.spin_nt = QDoubleSpinBox()
+        self.spin_nt.setRange(1, 10000)
+        self.spin_nt.setValue(100)
+        self.spin_nt.setDecimals(0)
+        self.spin_d_shell = QDoubleSpinBox()
+        self.spin_d_shell.setRange(1, 5000)
+        self.spin_d_shell.setValue(50.0)
+        self.spin_d_shell.setSuffix(" mm")
+        self.spin_rf_i = QDoubleSpinBox()
+        self.spin_rf_i.setRange(0, 1)
+        self.spin_rf_i.setDecimals(6)
+        self.spin_rf_i.setValue(0.0)
+        self.spin_rf_i.setSuffix(" m2K/W")
+        self.spin_rf_o = QDoubleSpinBox()
+        self.spin_rf_o.setRange(0, 1)
+        self.spin_rf_o.setDecimals(6)
+        self.spin_rf_o.setValue(0.0)
+        self.spin_rf_o.setSuffix(" m2K/W")
+
         self.combo_tube_mat = QComboBox()
         self.tube_mats = {"Karbon Çelik": 45.0, "Paslanmaz Çelik 316": 16.0, "Bakır": 400.0, "Alüminyum": 237.0}
         self.combo_tube_mat.addItems(list(self.tube_mats.keys()))
-        
+
         self.combo_hot_tube = QComboBox()
         self.combo_hot_tube.addItems(["Soğuk Akışkan", "Sıcak Akışkan"])
-        
+
         self.chk_finned = QCheckBox("Kanatçıklı (Finned)")
         self.chk_finned.setChecked(True)
-        self.spin_fin_h = QDoubleSpinBox(); self.spin_fin_h.setRange(1, 100); self.spin_fin_h.setValue(15.9); self.spin_fin_h.setSuffix(" mm")
-        self.spin_fin_t = QDoubleSpinBox(); self.spin_fin_t.setRange(0.1, 10); self.spin_fin_t.setValue(0.4); self.spin_fin_t.setSuffix(" mm")
-        self.spin_fin_dens = QDoubleSpinBox(); self.spin_fin_dens.setRange(1, 10000); self.spin_fin_dens.setValue(400); self.spin_fin_dens.setSuffix(" (1/m)"); self.spin_fin_dens.setDecimals(0)
+        self.spin_fin_h = QDoubleSpinBox()
+        self.spin_fin_h.setRange(1, 100)
+        self.spin_fin_h.setValue(15.9)
+        self.spin_fin_h.setSuffix(" mm")
+        self.spin_fin_t = QDoubleSpinBox()
+        self.spin_fin_t.setRange(0.1, 10)
+        self.spin_fin_t.setValue(0.4)
+        self.spin_fin_t.setSuffix(" mm")
+        self.spin_fin_dens = QDoubleSpinBox()
+        self.spin_fin_dens.setRange(1, 10000)
+        self.spin_fin_dens.setValue(400)
+        self.spin_fin_dens.setSuffix(" (1/m)")
+        self.spin_fin_dens.setDecimals(0)
         self.combo_fin_mat = QComboBox()
         self.combo_fin_mat.addItems(["Alüminyum (k=237)", "Karbon Çelik (k=45)"])
         self.combo_fin_type = QComboBox()
         self.combo_fin_type.addItems(["Dairesel (Annular)", "Düz (Rectangular)"])
         self.chk_finned.toggled.connect(self.toggle_finned)
-        
+
+        self.combo_exchanger = QComboBox()
+        self.combo_exchanger.addItems(list(EXCHANGER_LABEL_TO_INTERNAL.keys()))
+        self.combo_exchanger.currentIndexChanged.connect(self.on_exchanger_changed)
+
+        form_geo.addRow("Eşanjör Tipi:", self.combo_exchanger)
         form_geo.addRow("Dış Çap (Do):", self.spin_do)
         form_geo.addRow("İç Çap (Di):", self.spin_di)
         form_geo.addRow("Boru Uzunluğu:", self.spin_l)
@@ -626,12 +843,12 @@ class HeatExchangerDesktopApp(QMainWindow):
         form_geo.addRow(" Fin Yoğunluğu:", self.spin_fin_dens)
         form_geo.addRow(" Fin Malzemesi:", self.combo_fin_mat)
         form_geo.addRow(" Fin Tipi:", self.combo_fin_type)
-        
+
         self.stack_geom.addWidget(page_geo)
-        
+
         left_layout.addWidget(QLabel("🔲 Isı Değiştirici Özellikleri"))
         left_layout.addWidget(self.stack_geom)
-        
+
         # Buton
         self.btn_calc = QPushButton("🚀 HESAPLA VE DOĞRULA")
         self.btn_calc.setMinimumHeight(50)
@@ -643,40 +860,43 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.progress_calc.hide()
         left_layout.addWidget(self.progress_calc)
         self.toggle_finned(self.chk_finned.isChecked())
-        
+        self.on_exchanger_changed()
+
         left_layout.addStretch()
         main_layout.addWidget(left_panel)
-        
+
         # --- SAĞ PANEL (Sekmeler - Sonuçlar) ---
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
-        
+
         # Sonuçlar
         self.tab_results = QWidget()
         res_layout = QVBoxLayout(self.tab_results)
-        
+
         # Sonuç Yazıları
         self.lbl_geo_res = QLabel("")
         self.lbl_geo_res.setWordWrap(True)
         res_layout.addWidget(self.lbl_geo_res)
-        
+
         self.lbl_res_q = QLabel("Transfer Edilen Isı (Q): -")
         self.lbl_res_th = QLabel("Sıcak Akışkan Çıkış Sıcaklığı: -")
         self.lbl_res_tc = QLabel("Soğuk Akışkan Çıkış Sıcaklığı: -")
         self.lbl_res_eff = QLabel("Teorik Isı Değiştirici Verimi (ε): -")
-        self.lbl_res_act = QLabel("") # Gerçekleşen performans için
-        
+        self.lbl_res_act = QLabel("")  # Gerçekleşen performans için
+
         for lbl in [self.lbl_res_q, self.lbl_res_th, self.lbl_res_tc, self.lbl_res_eff, self.lbl_res_act]:
             lbl.setFont(QFont("Arial", 12, QFont.Bold))
             lbl.setStyleSheet("color: #2c3e50; padding: 5px;")
             res_layout.addWidget(lbl)
-            
+
         self.btn_export_report = QPushButton("📄 Sonuç Raporunu Dışa Aktar")
-        self.btn_export_report.setStyleSheet("background-color: #e67e22; color: white; padding: 10px; font-weight: bold;")
+        self.btn_export_report.setStyleSheet(
+            "background-color: #e67e22; color: white; padding: 10px; font-weight: bold;"
+        )
         self.btn_export_report.clicked.connect(self.export_report)
         res_layout.addWidget(self.btn_export_report)
-        self.btn_export_report.hide() # Hesaplama yapılana kadar gizli
-        
+        self.btn_export_report.hide()  # Hesaplama yapılana kadar gizli
+
         # Grafik için Figure ve Canvas (Sonuçlar sekmesinin en altına)
         self.figure = plt.figure(figsize=(6, 4))
         self.canvas = FigureCanvas(self.figure)
@@ -684,22 +904,24 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.figure_profile = plt.figure(figsize=(6, 3))
         self.canvas_profile = FigureCanvas(self.figure_profile)
         res_layout.addWidget(self.canvas_profile)
-            
+
         # Sekme 2: Doğrulama
         self.tab_cc = QWidget()
         cc_layout = QVBoxLayout(self.tab_cc)
         self.table_cc = QTableWidget(4, 8)
-        self.table_cc.setHorizontalHeaderLabels(["Metot", "Kaynak", "Durum", "Q (kW)", "Q Sapma (%)", "Sıcak Çıkış (°C)", "Soğuk Çıkış (°C)", "Uyarılar"])
+        self.table_cc.setHorizontalHeaderLabels(
+            ["Metot", "Kaynak", "Durum", "Q (kW)", "Q Sapma (%)", "Sıcak Çıkış (°C)", "Soğuk Çıkış (°C)", "Uyarılar"]
+        )
         self.table_cc.horizontalHeader().setStretchLastSection(True)
         cc_layout.addWidget(self.table_cc)
-        
+
         self.tabs.addTab(self.tab_results, "📊 Sonuçlar")
         self.tabs.addTab(self.tab_cc, "🔍 Cross-Check")
-        
+
         # Sekme 3: Sistem Logları
         self.tab_log = QWidget()
         log_layout = QVBoxLayout(self.tab_log)
-        
+
         top_log_lay = QHBoxLayout()
         top_log_lay.addWidget(QLabel("Log Seviyesi Filtresi:"))
         self.combo_log_level = QComboBox()
@@ -708,24 +930,34 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_log_level.currentTextChanged.connect(self.refresh_logs)
         top_log_lay.addWidget(self.combo_log_level)
         top_log_lay.addStretch()
-        
+
         log_layout.addLayout(top_log_lay)
-        
+
         from PyQt5.QtWidgets import QPlainTextEdit
+
         self.text_log = QPlainTextEdit()
         self.text_log.setReadOnly(True)
         # Siyah arkaplan ve yesil metin (Hacker style)
         self.text_log.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: Consolas;")
         log_layout.addWidget(self.text_log)
-        
+
         self.tabs.addTab(self.tab_log, "📝 Sistem Logları")
-        
+
         self.toggle_purpose(self.combo_purpose.currentText())
         self.toggle_hot_fluid(self.combo_hot.currentText())
         self.toggle_cold_fluid(self.combo_cold.currentText())
 
     def open_log_folder(self):
-        os.startfile(os.path.dirname(LOG_FILE))
+        import subprocess
+        import sys
+
+        log_dir = os.path.dirname(LOG_FILE)
+        if sys.platform == "darwin":
+            subprocess.run(["open", log_dir])
+        elif sys.platform == "win32":
+            os.startfile(log_dir)
+        else:
+            subprocess.run(["xdg-open", log_dir])
 
     def show_error(self, title, message, exc=None):
         if exc is not None:
@@ -739,10 +971,10 @@ class HeatExchangerDesktopApp(QMainWindow):
         )
 
     def export_report(self):
-        if not hasattr(self, 'last_res_main'):
+        if not hasattr(self, "last_res_main"):
             QMessageBox.warning(self, "Hata", "Önce hesaplama yapmalısınız!")
             return
-            
+
         options = QFileDialog.Options()
         fileName, selected_filter = QFileDialog.getSaveFileName(
             self,
@@ -761,20 +993,17 @@ class HeatExchangerDesktopApp(QMainWindow):
                 else:
                     if not fileName.lower().endswith(".txt"):
                         fileName += ".txt"
-                    with open(fileName, 'w', encoding='utf-8') as f:
+                    with open(fileName, "w", encoding="utf-8") as f:
                         f.write(build_calculation_report(self.last_report_context))
-                        
+
                 QMessageBox.information(self, "Başarılı", "Rapor başarıyla kaydedildi!")
             except Exception as e:
                 self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
 
-
-    
     def append_log(self, msg, levelno):
         if len(self.all_logs) > 5000:
-            self.all_logs.pop(0) # Keep max 5000 lines
+            self.all_logs.pop(0)  # Keep max 5000 lines
         self.all_logs.append((msg, levelno))
-        
 
     def filter_and_display_last_log(self, msg, levelno):
         level_map = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
@@ -784,10 +1013,10 @@ class HeatExchangerDesktopApp(QMainWindow):
     def refresh_logs(self):
         level_map = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
         selected_level = level_map.get(self.combo_log_level.currentText(), logging.INFO)
-        
+
         filtered_msgs = [msg for msg, levelno in self.all_logs if levelno >= selected_level]
         self.text_log.setPlainText("\n".join(filtered_msgs))
-        
+
         # Sona kaydır
         scrollbar = self.text_log.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
@@ -901,21 +1130,18 @@ class HeatExchangerDesktopApp(QMainWindow):
         return "Manuel Giriş" in text
 
     def set_manual_property_controls(self, side, enabled):
-        widgets = (
-            (self.spin_mu_hot, self.spin_k_hot)
-            if side == "hot"
-            else (self.spin_mu_cold, self.spin_k_cold)
-        )
+        widgets = (self.spin_mu_hot, self.spin_k_hot) if side == "hot" else (self.spin_mu_cold, self.spin_k_cold)
         for widget in widgets:
             widget.setEnabled(enabled)
-            
+
     def open_composition_editor(self):
         dialog = CompositionDialog(self, self.hot_mixture_data, self.hot_mixture_basis)
         if dialog.exec_():
             self.hot_mixture_data = dialog.get_composition()
             self.hot_mixture_basis = dialog.get_basis()
             from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, 'Bilgi', 'Kompozisyon kaydedildi.')
+
+            QMessageBox.information(self, "Bilgi", "Kompozisyon kaydedildi.")
 
     def open_cold_composition_editor(self):
         dialog = CompositionDialog(self, self.cold_mixture_data, self.cold_mixture_basis)
@@ -923,8 +1149,9 @@ class HeatExchangerDesktopApp(QMainWindow):
             self.cold_mixture_data = dialog.get_composition()
             self.cold_mixture_basis = dialog.get_basis()
             from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, 'Bilgi', 'Kompozisyon kaydedildi.')
-            
+
+            QMessageBox.information(self, "Bilgi", "Kompozisyon kaydedildi.")
+
     def toggle_purpose(self, text):
         if "Performans" in text:
             self.lbl_t_hot_out.show()
@@ -943,15 +1170,39 @@ class HeatExchangerDesktopApp(QMainWindow):
         else:
             self.stack_geom.setCurrentIndex(0)
 
+    def on_exchanger_changed(self):
+        exch_internal = EXCHANGER_LABEL_TO_INTERNAL.get(self.combo_exchanger.currentText(), "finned_tube")
+        allowed = EXCHANGER_ALLOWED_FLOWS.get(exch_internal, {"cross_unmixed"})
+        # Refill combo_flow with only allowed types
+        current = self.combo_flow.currentText()
+        self.combo_flow.blockSignals(True)
+        self.combo_flow.clear()
+        for label, internal in FLOW_LABEL_TO_INTERNAL.items():
+            if internal in allowed:
+                self.combo_flow.addItem(label)
+        idx = self.combo_flow.findText(current)
+        if idx >= 0:
+            self.combo_flow.setCurrentIndex(idx)
+        elif self.combo_flow.count() > 0:
+            self.combo_flow.setCurrentIndex(0)
+        self.combo_flow.blockSignals(False)
+        # Show/hide fin-related fields based on exchanger type
+        is_finned = exch_internal == "finned_tube"
+        self.chk_finned.setVisible(is_finned)
+        self.toggle_finned(is_finned and self.chk_finned.isChecked())
+
     def save_data(self):
         options = QFileDialog.Options()
-        fileName, _ = QFileDialog.getSaveFileName(self, "Verileri Kaydet", "heat_exchanger_save.json", "JSON Files (*.json);;All Files (*)", options=options)
+        fileName, _ = QFileDialog.getSaveFileName(
+            self, "Verileri Kaydet", "heat_exchanger_save.json", "JSON Files (*.json);;All Files (*)", options=options
+        )
         if fileName:
             data = {
                 "calc_purpose": self.combo_purpose.currentText(),
                 "purpose": self.combo_purpose.currentText(),
                 "flow_type": FLOW_LABEL_TO_INTERNAL.get(self.combo_flow.currentText(), self.combo_flow.currentText()),
                 "flow_label": self.combo_flow.currentText(),
+                "exchanger_type": EXCHANGER_LABEL_TO_INTERNAL.get(self.combo_exchanger.currentText(), "finned_tube"),
                 "u_calc_mode": self.combo_u_mode.currentText(),
                 "solver_method": self.combo_method.currentText(),
                 "u_mode": self.combo_u_mode.currentText(),
@@ -1003,23 +1254,29 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_t": self.spin_fin_t.value(),
                 "fin_dens": self.spin_fin_dens.value(),
                 "fin_mat": self.combo_fin_mat.currentText(),
-                "fin_type": self.combo_fin_type.currentText()
+                "fin_type": self.combo_fin_type.currentText(),
             }
-            with open(fileName, 'w', encoding='utf-8') as f:
+            with open(fileName, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
             QMessageBox.information(self, "Başarılı", "Veriler başarıyla kaydedildi.")
             logger.info("Input data saved: %s", fileName)
 
     def load_data(self):
         options = QFileDialog.Options()
-        fileName, _ = QFileDialog.getOpenFileName(self, "Verileri Yükle", "", "JSON Files (*.json);;All Files (*)", options=options)
+        fileName, _ = QFileDialog.getOpenFileName(
+            self, "Verileri Yükle", "", "JSON Files (*.json);;All Files (*)", options=options
+        )
         if fileName:
             try:
-                with open(fileName, 'r', encoding='utf-8') as f:
+                with open(fileName, encoding="utf-8") as f:
                     data = normalize_loaded_data(json.load(f))
                 self.combo_purpose.setCurrentText(data.get("purpose", "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)"))
                 flow_value = data.get("flow_type", "cross_unmixed")
                 self.combo_flow.setCurrentText(FLOW_INTERNAL_TO_LABEL.get(flow_value, flow_value))
+                exch_value = data.get("exchanger_type", "finned_tube")
+                self.combo_exchanger.setCurrentText(
+                    EXCHANGER_INTERNAL_TO_LABEL.get(exch_value, "Kanatçıklı Boru (Finned Tube)")
+                )
                 self.combo_method.setCurrentText(data.get("solver_method", "Kendi Algoritmamız (Epsilon-NTU)"))
                 self.combo_u_mode.setCurrentText(data.get("u_mode", "Basit Mod"))
                 self.combo_hot.setCurrentText(data.get("hot_fluid", "Therminol 66"))
@@ -1028,19 +1285,19 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_m_hot.setValue(data.get("m_hot", 15.0))
                 self.spin_t_hot.setValue(data.get("t_hot_in", 450.0))
                 self.spin_t_hot_out.setValue(data.get("t_hot_out_opt", -999.0))
-                
+
                 self.combo_cold.setCurrentText(data.get("cold_fluid", "Su"))
                 self.cold_mixture_data = data.get("cold_mixture_data", self.cold_mixture_data)
                 self.cold_mixture_basis = data.get("cold_mixture_basis", self.cold_mixture_basis)
                 self.spin_m_cold.setValue(data.get("m_cold", 5.0))
                 self.spin_t_cold.setValue(data.get("t_cold_in", 120.0))
                 self.spin_t_cold_out.setValue(data.get("t_cold_out_opt", -999.0))
-                
+
                 self.spin_mu_hot.setValue(data.get("mu_hot", 0.00002))
                 self.spin_k_hot.setValue(data.get("k_hot", 0.03))
                 self.spin_mu_cold.setValue(data.get("mu_cold", 0.001))
                 self.spin_k_cold.setValue(data.get("k_cold", 0.15))
-                
+
                 self.spin_U.setValue(data.get("U", 50.0))
                 self.spin_A.setValue(data.get("A", 200.0))
                 self.spin_do.setValue(data.get("Do", 25.4))
@@ -1052,7 +1309,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_rf_o.setValue(data.get("R_f_o", 0.0))
                 self.combo_tube_mat.setCurrentText(data.get("tube_mat", "Karbon Çelik"))
                 self.combo_hot_tube.setCurrentText(data.get("hot_tube", "Soğuk Akışkan"))
-                
+
                 self.chk_finned.setChecked(data.get("is_finned", True))
                 self.spin_fin_h.setValue(data.get("fin_h", 15.9))
                 self.spin_fin_t.setValue(data.get("fin_t", 0.4))
@@ -1062,7 +1319,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.toggle_finned(self.chk_finned.isChecked())
                 self.toggle_hot_fluid(self.combo_hot.currentText())
                 self.toggle_cold_fluid(self.combo_cold.currentText())
-                
+
                 QMessageBox.information(self, "Başarılı", "Veriler başarıyla yüklendi.")
             except Exception as e:
                 self.show_error("Hata", f"Dosya yüklenirken hata oluştu: {str(e)}", e)
@@ -1094,10 +1351,12 @@ class HeatExchangerDesktopApp(QMainWindow):
     def create_calculation_snapshot(self):
         flow_label = self.combo_flow.currentText()
         flow_type = FLOW_LABEL_TO_INTERNAL.get(flow_label, flow_label)
+        exchanger_type = EXCHANGER_LABEL_TO_INTERNAL.get(self.combo_exchanger.currentText(), "finned_tube")
         return {
             "purpose": self.combo_purpose.currentText(),
             "flow_label": flow_label,
             "flow_type": flow_type,
+            "exchanger_type": exchanger_type,
             "method": self.combo_method.currentText(),
             "u_mode": self.combo_u_mode.currentText(),
             "hot_selection": self.combo_hot.currentText(),
@@ -1138,6 +1397,9 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "k_fin": 237.0 if "Alüminyum" in self.combo_fin_mat.currentText() else 45.0,
                 "fin_type": "rectangular" if "Rectangular" in self.combo_fin_type.currentText() else "annular",
                 "pitch": self.spin_do.value() * 2 / 1000.0,
+                "pitch_parallel": self.spin_do.value() * 2 / 1000.0,
+                "tube_layout_angle": "30",
+                "tube_arrangement": "staggered",
                 "D_shell": self.spin_d_shell.value() / 1000.0,
                 "R_f_i": self.spin_rf_i.value(),
                 "R_f_o": self.spin_rf_o.value(),
@@ -1176,20 +1438,36 @@ class HeatExchangerDesktopApp(QMainWindow):
 
         if geo_res:
             geo_warnings = "\n".join(geo_res.get("warnings", []))
+            dp_text = ""
+            if geo_res.get("delta_p_tube", 0) > 0:
+                dp_text = (
+                    f"\nΔP_boru = {geo_res['delta_p_tube'] / 1000:.3f} kPa"
+                    f"  |  ΔP_gövde = {geo_res['delta_p_shell'] / 1000:.3f} kPa"
+                )
+            exch_label = EXCHANGER_INTERNAL_TO_LABEL.get(hx.exchanger_type, hx.exchanger_type)
             self.lbl_geo_res.setText(
-                f"📐 Geometrik Mod: U={hx.U:.2f} W/m²K, A={hx.A:.2f} m²\n"
-                f"h_i={geo_res['h_i']:.1f}, h_o={geo_res['h_o']:.1f}"
+                f"📐 {exch_label}: U={hx.U:.2f} W/m²K, A={hx.A:.2f} m²\n"
+                f"h_i={geo_res['h_i']:.1f} W/m²K, h_o={geo_res['h_o']:.1f} W/m²K"
+                + dp_text
                 + (f"\n{geo_warnings}" if geo_warnings else "")
             )
         else:
             self.lbl_geo_res.setText("")
 
         if is_rating and res_act:
-            self.lbl_res_q.setText(f"Gerçekleşen Transfer Edilen Isı (Q_ortalama): {res_act['Q_avg [W]']/1000:.2f} kW")
-            self.lbl_res_th.setText(f"Ölçülen Sıcak Çıkış: {t_out_h:.2f} °C  (Tasarım Beklentisi: {res_main['T_hot_out [C]']:.2f} °C)")
-            self.lbl_res_tc.setText(f"Ölçülen Soğuk Çıkış: {t_out_c:.2f} °C  (Tasarım Beklentisi: {res_main['T_cold_out [C]']:.2f} °C)")
-            self.lbl_res_eff.setText(f"Gerçekleşen Verim (ε): % {res_act['epsilon_actual']*100:.2f}  (Tasarım Verimi: % {res_main.get('epsilon', 0.0)*100:.2f})")
-            enerji_farki = abs(res_act['Q_hot [W]'] - res_act['Q_cold [W]']) / max(abs(res_act['Q_hot [W]']), 1) * 100
+            self.lbl_res_q.setText(
+                f"Gerçekleşen Transfer Edilen Isı (Q_ortalama): {res_act['Q_avg [W]'] / 1000:.2f} kW"
+            )
+            self.lbl_res_th.setText(
+                f"Ölçülen Sıcak Çıkış: {t_out_h:.2f} °C  (Tasarım Beklentisi: {res_main['T_hot_out [C]']:.2f} °C)"
+            )
+            self.lbl_res_tc.setText(
+                f"Ölçülen Soğuk Çıkış: {t_out_c:.2f} °C  (Tasarım Beklentisi: {res_main['T_cold_out [C]']:.2f} °C)"
+            )
+            self.lbl_res_eff.setText(
+                f"Gerçekleşen Verim (ε): % {res_act['epsilon_actual'] * 100:.2f}  (Tasarım Verimi: % {res_main.get('epsilon', 0.0) * 100:.2f})"
+            )
+            enerji_farki = abs(res_act["Q_hot [W]"] - res_act["Q_cold [W]"]) / max(abs(res_act["Q_hot [W]"]), 1) * 100
             warnings_text = "\n".join(res_act.get("warnings", []))
             self.lbl_res_act.setText(
                 f"⚠️ Enerji Dengesi Sapması: % {enerji_farki:.2f}\n"
@@ -1197,10 +1475,10 @@ class HeatExchangerDesktopApp(QMainWindow):
                 + (f"\n{warnings_text}" if warnings_text else "")
             )
         else:
-            self.lbl_res_q.setText(f"Tasarım Isı Yükü (Q): {res_main['Q [W]']/1000:.2f} kW")
+            self.lbl_res_q.setText(f"Tasarım Isı Yükü (Q): {res_main['Q [W]'] / 1000:.2f} kW")
             self.lbl_res_th.setText(f"Hesaplanan Sıcak Akışkan Çıkışı: {res_main['T_hot_out [C]']:.2f} °C")
             self.lbl_res_tc.setText(f"Hesaplanan Soğuk Akışkan Çıkışı: {res_main['T_cold_out [C]']:.2f} °C")
-            self.lbl_res_eff.setText(f"Sistem Tasarım Verimi (ε): % {res_main.get('epsilon', 0.0)*100:.2f}")
+            self.lbl_res_eff.setText(f"Sistem Tasarım Verimi (ε): % {res_main.get('epsilon', 0.0) * 100:.2f}")
             self.lbl_res_act.setText("\n".join(res_main.get("warnings", [])))
 
         if pychemengg_warning:
@@ -1214,7 +1492,7 @@ class HeatExchangerDesktopApp(QMainWindow):
             self.table_cc.setItem(row, 0, QTableWidgetItem(result["Method"]))
             self.table_cc.setItem(row, 1, QTableWidgetItem(result["Source"]))
             self.table_cc.setItem(row, 2, QTableWidgetItem(result.get("status", "ok")))
-            self.table_cc.setItem(row, 3, QTableWidgetItem(f"{result['Q [W]']/1000:.2f}"))
+            self.table_cc.setItem(row, 3, QTableWidgetItem(f"{result['Q [W]'] / 1000:.2f}"))
             self.table_cc.setItem(row, 4, QTableWidgetItem(q_diff))
             self.table_cc.setItem(row, 5, QTableWidgetItem(f"{result['T_hot_out [C]']:.2f}"))
             self.table_cc.setItem(row, 6, QTableWidgetItem(f"{result['T_cold_out [C]']:.2f}"))
@@ -1228,9 +1506,3 @@ class HeatExchangerDesktopApp(QMainWindow):
     def _calculate_impl(self):
         payload = compute_desktop_calculation(self.create_calculation_snapshot())
         self.apply_calculation_result(payload)
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    ex = HeatExchangerDesktopApp()
-    ex.show()
-    sys.exit(app.exec_())

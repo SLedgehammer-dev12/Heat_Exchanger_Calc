@@ -2,6 +2,7 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
+from config import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES
 
 NOISY_LOGGERS = {
     "matplotlib": logging.WARNING,
@@ -32,8 +33,8 @@ def setup_logging(app_mode="app"):
 
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=2_000_000,
-        backupCount=5,
+        maxBytes=LOG_FILE_MAX_BYTES,
+        backupCount=LOG_FILE_BACKUP_COUNT,
         encoding="utf-8",
     )
     file_handler._heat_exchanger_file_handler = True

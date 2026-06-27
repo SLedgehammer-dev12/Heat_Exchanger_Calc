@@ -1,15 +1,21 @@
-import unittest
 import hashlib
 import os
 import tempfile
+import unittest
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 from app_desktop import compute_desktop_calculation
 from engineering_utils import fluid_report_data, from_celsius, result_warnings, to_celsius, to_kg_s
-from heat_exchanger import FinTubeHeatExchanger, Fluid
 from fluids_db import get_chedl_mixture_fluid_data, get_fluid_data, get_mixture_fluid_data, materialize_fluid_data
+from heat_exchanger import EXCHANGER_TYPE_DOUBLE, EXCHANGER_TYPE_SHELL, FinTubeHeatExchanger, Fluid
+
+HX_SHELL = EXCHANGER_TYPE_SHELL
+HX_DOUBLE = EXCHANGER_TYPE_DOUBLE
+from exceptions import UpdaterError
 from reporting import build_calculation_report, build_calculation_report_pdf
 from updater import download_release_asset, select_release_asset
 
@@ -31,6 +37,7 @@ def _manual_snapshot(**overrides):
         "purpose": "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)",
         "flow_label": "Ters Akış (Counter Flow)",
         "flow_type": "counter",
+        "exchanger_type": "shell_and_tube",
         "method": "Kendi Algoritmamız (Epsilon-NTU)",
         "u_mode": "Basit Mod (Manuel U Değeri)",
         "hot_selection": "Manuel Giriş (Özel Akışkan)",
@@ -83,23 +90,19 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_counterflow_lmtd_matches_ntu_in_high_effectiveness_case(self):
         hot = Fluid(name="hot", cp=4000.0, density=1000.0, mu=1e-3, k_cond=0.6, is_coolprop=False)
         cold = Fluid(name="cold", cp=4000.0, density=1000.0, mu=1e-3, k_cond=0.6, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=5000.0, A=100.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=5000.0, A=100.0, flow_type="counter", exchanger_type=HX_DOUBLE)
 
         ntu_res = hx.solve_ntu(1.0, 1.0, 100.0, 0.0, source="custom")
         lmtd_res = hx.solve_lmtd(1.0, 1.0, 100.0, 0.0, source="ht")
 
         self.assertAlmostEqual(lmtd_res["Q [W]"], ntu_res["Q [W]"], delta=ntu_res["Q [W]"] * 0.01)
-        self.assertAlmostEqual(
-            lmtd_res["T_hot_out [C]"], ntu_res["T_hot_out [C]"], delta=1.0
-        )
-        self.assertAlmostEqual(
-            lmtd_res["T_cold_out [C]"], ntu_res["T_cold_out [C]"], delta=1.0
-        )
+        self.assertAlmostEqual(lmtd_res["T_hot_out [C]"], ntu_res["T_hot_out [C]"], delta=1.0)
+        self.assertAlmostEqual(lmtd_res["T_cold_out [C]"], ntu_res["T_cold_out [C]"], delta=1.0)
 
     def test_lmtd_result_contains_report_crosscheck_fields(self):
         hot = Fluid(name="hot", cp=2000.0, density=900.0, mu=1e-3, k_cond=0.2, is_coolprop=False)
         cold = Fluid(name="cold", cp=4200.0, density=1000.0, mu=1e-3, k_cond=0.6, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=250.0, A=20.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=250.0, A=20.0, flow_type="counter", exchanger_type=HX_DOUBLE)
 
         result = hx.solve_lmtd(1.5, 2.0, 160.0, 30.0, source="ht")
 
@@ -111,7 +114,7 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_actual_performance_flags_energy_balance_mismatch(self):
         hot = Fluid(name="hot", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
         cold = Fluid(name="cold", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter", exchanger_type=HX_SHELL)
 
         result = hx.calculate_actual_performance(1.0, 1.0, 100.0, 0.0, 70.0, 10.0)
 
@@ -135,7 +138,9 @@ class HeatExchangerRegressionTests(unittest.TestCase):
         }
 
         clean = hx.calculate_geometric_U(dict(geom, R_f_i=0.0, R_f_o=0.0), m_hot=15.0, m_cold=5.0, hot_is_tube=False)
-        fouled = hx.calculate_geometric_U(dict(geom, R_f_i=0.002, R_f_o=0.002), m_hot=15.0, m_cold=5.0, hot_is_tube=False)
+        fouled = hx.calculate_geometric_U(
+            dict(geom, R_f_i=0.002, R_f_o=0.002), m_hot=15.0, m_cold=5.0, hot_is_tube=False
+        )
 
         self.assertLess(fouled["U"], clean["U"])
         self.assertEqual(fouled["R_f_i"], 0.002)
@@ -170,7 +175,7 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_ntu_rejects_nonphysical_inputs(self):
         hot = Fluid(name="hot", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
         cold = Fluid(name="cold", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=10.0, A=10.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=10.0, A=10.0, flow_type="counter", exchanger_type=HX_SHELL)
 
         with self.assertRaises(ValueError):
             hx.solve_ntu(0.0, 1.0, 100.0, 0.0)
@@ -203,7 +208,15 @@ class HeatExchangerRegressionTests(unittest.TestCase):
             P_pa=101325.0,
         )
 
-        self.assertIn(result["property_source"], {"CoolProp HEOS mixture", "CoolProp ideal mixture", "ChEDL/thermo"})
+        self.assertIn(
+            result["property_source"],
+            {
+                "CoolProp HEOS mixture",
+                "CoolProp ideal mixture",
+                "ChEDL/thermo",
+                "Wilke viscosity + Wassiljewa conductivity",
+            },
+        )
         self.assertGreater(result["cp"], 0.0)
         self.assertGreater(result["density"], 0.0)
         self.assertGreater(result["mu"], 0.0)
@@ -258,7 +271,7 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_pychemengg_validation_is_optional(self):
         hot = Fluid(name="hot", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
         cold = Fluid(name="cold", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=10.0, A=10.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=10.0, A=10.0, flow_type="counter", exchanger_type=HX_SHELL)
 
         result = hx.solve_pychemengg_ntu(1.0, 1.0, 100.0, 0.0)
 
@@ -286,14 +299,37 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_reporting_text_and_pdf_include_fouling_formula(self):
         hot = Fluid(name="hot", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
         cold = Fluid(name="cold", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter", exchanger_type=HX_DOUBLE)
         main = hx.solve_ntu(1.0, 1.0, 100.0, 0.0)
         context = {
-            "methods": {"Hesap amacı": "test", "Akış tipi": "counter", "Akış tipi internal": "counter", "Ana çözücü": "test", "U modu": "Geometrik Mod"},
-            "inputs": {"m_hot_raw": "1 kg/s", "m_cold_raw": "1 kg/s", "m_hot_kg_s": 1.0, "m_cold_kg_s": 1.0, "T_hot_in_C": 100.0, "T_cold_in_C": 0.0, "U": 100.0, "A": 10.0},
+            "methods": {
+                "Hesap amacı": "test",
+                "Akış tipi": "counter",
+                "Akış tipi internal": "counter",
+                "Ana çözücü": "test",
+                "U modu": "Geometrik Mod",
+            },
+            "inputs": {
+                "m_hot_raw": "1 kg/s",
+                "m_cold_raw": "1 kg/s",
+                "m_hot_kg_s": 1.0,
+                "m_cold_kg_s": 1.0,
+                "T_hot_in_C": 100.0,
+                "T_cold_in_C": 0.0,
+                "U": 100.0,
+                "A": 10.0,
+            },
             "fluids": {"hot": fluid_report_data("hot", {}, hot), "cold": fluid_report_data("cold", {}, cold)},
             "geometry": {"R_f_i": 0.001, "R_f_o": 0.002},
-            "geo_result": {"U": 100.0, "A_total": 10.0, "h_i": 500.0, "h_o": 100.0, "Re_i": 10000.0, "Re_o": 20000.0, "R_wall": 0.0001},
+            "geo_result": {
+                "U": 100.0,
+                "A_total": 10.0,
+                "h_i": 500.0,
+                "h_o": 100.0,
+                "Re_i": 10000.0,
+                "Re_o": 20000.0,
+                "R_wall": 0.0001,
+            },
             "results": {"main": main},
             "actual_result": None,
             "crosscheck_results": [main],
@@ -310,14 +346,14 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_enhanced_schematic_can_show_temperatures(self):
         hot = Fluid(name="hot", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
         cold = Fluid(name="cold", cp=1000.0, density=1.0, mu=1e-5, k_cond=0.03, is_coolprop=False)
-        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter")
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter", exchanger_type=HX_SHELL)
         result = hx.solve_ntu(1.0, 1.0, 100.0, 0.0)
 
         fig = hx.plot_enhanced_schematic(result=result)
         text = "\n".join(item.get_text() for item in fig.axes[0].texts)
 
-        self.assertIn("100.0 C", text)
-        self.assertIn("0.0 C", text)
+        self.assertIn("100.0 °C", text)
+        self.assertIn("0.0 °C", text)
 
     def test_web_source_exposes_cross_mixed_unmixed_option(self):
         source = Path("app_web.py").read_text(encoding="utf-8")
@@ -343,7 +379,11 @@ class HeatExchangerRegressionTests(unittest.TestCase):
         update_info = {
             "assets": [
                 {"name": "HeatExchangerCalcWeb-v1.zip", "download_url": "https://example.test/web.zip", "digest": ""},
-                {"name": "HeatExchangerCalcDesktop-v1.zip", "download_url": "https://example.test/desktop.zip", "digest": f"sha256:{digest}"},
+                {
+                    "name": "HeatExchangerCalcDesktop-v1.zip",
+                    "download_url": "https://example.test/desktop.zip",
+                    "digest": f"sha256:{digest}",
+                },
             ]
         }
 
@@ -357,13 +397,17 @@ class HeatExchangerRegressionTests(unittest.TestCase):
     def test_updater_removes_download_when_sha256_fails(self):
         update_info = {
             "assets": [
-                {"name": "HeatExchangerCalcDesktop-v1.zip", "download_url": "https://example.test/desktop.zip", "digest": "sha256:" + "0" * 64}
+                {
+                    "name": "HeatExchangerCalcDesktop-v1.zip",
+                    "download_url": "https://example.test/desktop.zip",
+                    "digest": "sha256:" + "0" * 64,
+                }
             ]
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("urllib.request.urlopen", return_value=_FakeUrlOpen(b"bad-bytes")):
-                with self.assertRaises(ValueError):
+                with self.assertRaises((ValueError, UpdaterError)):
                     download_release_asset(update_info, tmpdir, app_kind="desktop")
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "HeatExchangerCalcDesktop-v1.zip")))
 
@@ -373,8 +417,30 @@ class HeatExchangerRegressionTests(unittest.TestCase):
             self.assertIn("engineering_utils", spec_text)
             self.assertIn("reportlab", spec_text)
             self.assertIn("collect_data_files('ht')", spec_text)
-            self.assertTrue("icon='app_icon.ico'" in spec_text or "icon=['app_icon.ico']" in spec_text)
+            self.assertTrue(
+                "icon='app_icon.ico'" in spec_text
+                or "icon=['app_icon.ico']" in spec_text
+                or "icon=[icon_path]" in spec_text
+            )
             self.assertIn("version='version_info.txt'", spec_text)
+
+    def test_bowman_f_edge_cases_do_not_produce_nan(self):
+        from heat_exchanger import _bowman_lmtd_factor
+
+        # Edge case: P ≈ 1 (temperature cross)
+        f1 = _bowman_lmtd_factor(100.0, 20.0, 99.999, 99.998, C_h=100.0, C_c=100.0)
+        self.assertFalse(np.isnan(f1))
+        self.assertGreaterEqual(f1, 0.01)
+        # Edge case: R = 0 (phase change — C_h >> C_c)
+        f2 = _bowman_lmtd_factor(200.0, 50.0, 100.0, 60.0, C_h=1e6, C_c=100.0)
+        self.assertFalse(np.isnan(f2))
+        # Edge case: P = 0 (no heat transfer)
+        f3 = _bowman_lmtd_factor(100.0, 20.0, 100.0, 20.0, C_h=100.0, C_c=100.0)
+        self.assertEqual(f3, 1.0)
+        # Edge case: R = 1 (balanced flow)
+        f4 = _bowman_lmtd_factor(100.0, 20.0, 60.0, 60.0, C_h=100.0, C_c=100.0)
+        self.assertFalse(np.isnan(f4))
+        self.assertGreaterEqual(f4, 0.01)
 
 
 if __name__ == "__main__":

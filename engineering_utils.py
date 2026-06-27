@@ -1,43 +1,15 @@
-def _normalize_unit(unit):
-    normalized = str(unit)
-    for marker in ("\u00c2", "\u00c3\u201a", "\ufffd", "?"):
-        normalized = normalized.replace(marker, "")
-    return normalized
+from __future__ import annotations
+
+from typing import Any
+
+from units import from_celsius, to_celsius, to_kg_s  # noqa: F401 — re-export for backwards compat
 
 
-def to_kg_s(val, unit, density):
-    normalized_unit = _normalize_unit(unit)
-    if normalized_unit == "kg/h":
-        return val / 3600.0
-    if normalized_unit == "lb/s":
-        return val * 0.453592
-    if normalized_unit in ("m3/s", "m\u00b3/s", "m/s"):
-        return val * density
-    if normalized_unit in ("m3/h", "m\u00b3/h", "m/h"):
-        return (val / 3600.0) * density
-    if normalized_unit == "CFM":
-        return (val * 0.000471947) * density
-    return val
+def _normalize_unit(unit: str) -> str:  # pragma: no cover — retained for backward compatibility
+    return str(unit)
 
 
-def to_celsius(val, unit):
-    normalized_unit = _normalize_unit(unit)
-    if normalized_unit in ("\u00b0F", "F"):
-        return (val - 32.0) * 5.0 / 9.0
-    if normalized_unit == "K":
-        return val - 273.15
-    return val
-
-
-def from_celsius(val, unit):
-    normalized_unit = _normalize_unit(unit)
-    if normalized_unit in ("\u00b0F", "F"):
-        return (val * 9.0 / 5.0) + 32.0
-    if normalized_unit == "K":
-        return val + 273.15
-    return val
-
-def result_warnings(*results):
+def result_warnings(*results: dict[str, Any] | None) -> list[str]:
     warnings = []
     for result in results:
         if not result:

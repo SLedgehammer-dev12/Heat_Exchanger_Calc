@@ -1,20 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-datas = [('data', 'data'), ('app_web.py', '.')]
+datas = [('data', 'data'), ('app_web.py', '.'), ('locale', 'locale')]
 binaries = []
-hiddenimports = ['scipy._cyutility', 'engineering_utils', 'reportlab', 'app_web', 'fluids_db', 'heat_exchanger', 'reporting', 'updater', 'version', 'logging_config', 'engineering_utils']
+hiddenimports = [
+    'scipy._cyutility', 'engineering_utils', 'reportlab',
+    'app_web', 'fluids_db', 'heat_exchanger', 'reporting', 'updater',
+    'version', 'logging_config', 'engineering_utils',
+    'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
+    'exceptions', 'helpers', 'correlations', 'plot_theme',
+]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')
 datas += collect_data_files('fluids')
 datas += collect_data_files('ht')
+datas += collect_data_files('pint')
+datas += collect_data_files('iapws')
 datas += copy_metadata('streamlit')
 tmp_ret = collect_all('reportlab')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('streamlit')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+icon_path = 'app_icon.icns' if sys.platform == 'darwin' else 'app_icon.ico'
 
 
 a = Analysis(
@@ -35,8 +46,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries,
+    a.datas,
     name='HeatExchangerCalcWeb',
     debug=False,
     bootloader_ignore_signals=False,
@@ -49,14 +60,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='version_info.txt',
-    icon=['app_icon.ico'],
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='HeatExchangerCalcWeb',
+    icon=[icon_path],
 )

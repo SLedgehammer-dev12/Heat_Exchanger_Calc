@@ -5,6 +5,7 @@ ht==1.2.0
 matplotlib
 numpy
 pandas
+pint
 pychemengg==0.1a11
 scipy
 streamlit==1.56.0
