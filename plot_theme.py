@@ -59,7 +59,7 @@ def apply_theme() -> None:
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.15,
     }
-    mpl.rcParams.update(rc)
+    mpl.rcParams.update(rc)  # type: ignore[arg-type]
 
 
 PALETTE = {
