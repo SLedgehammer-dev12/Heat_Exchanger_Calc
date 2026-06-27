@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv pip install --system ruff
+      - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
 
@@ -23,10 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv pip install --system -e ".[dev,desktop,web]"
+      - run: pip install -e ".[dev,desktop,web]"
       - run: mypy . --ignore-missing-imports
 
   test:
@@ -38,14 +38,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libgl1
-      - run: uv pip install --system -e ".[dev,desktop,web]"
-      - run: python -m pytest test_*.py -v --tb=short
+      - run: pip install -e ".[dev,desktop,web]"
+      - run: python -m pytest -v --tb=short
       - name: Upload coverage HTML report
         if: runner.os == 'ubuntu' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
@@ -57,10 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv pip install --system -e ".[desktop,web]"
+      - run: pip install -e ".[desktop,web]"
       - run: python -c "from heat_exchanger import FinTubeHeatExchanger, Fluid; print('Engine OK')"
       - run: python -c "from app_desktop import compute_desktop_calculation; print('Desktop OK')"
       - run: python -c "from exceptions import InvalidInputError; print('exceptions OK')"
