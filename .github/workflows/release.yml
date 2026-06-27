@@ -93,5 +93,6 @@ jobs:
           body: "See [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md) for details."
           draft: false
           prerelease: false
+          overwrite: true
           files: release/*
           fail_on_unmatched_files: true
