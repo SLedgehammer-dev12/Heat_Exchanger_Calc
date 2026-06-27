@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev,desktop,web]"
-      - run: mypy . --ignore-missing-imports --explicit-package-bases
+      - run: mypy . --ignore-missing-imports --explicit-package-bases --python-version 3.12
 
   test:
     strategy:
