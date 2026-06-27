@@ -65,6 +65,7 @@ select = [
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
+    "E402", # module-level import ordering (intentional: logger/config init)
 ]
 
 [tool.ruff.lint.isort]

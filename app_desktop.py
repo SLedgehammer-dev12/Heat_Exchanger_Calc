@@ -452,7 +452,7 @@ class CompositionDialog(QDialog):
                         comp[gas] += val
                     else:
                         comp[gas] = val
-                except:
+                except Exception:
                     pass
         return comp
 

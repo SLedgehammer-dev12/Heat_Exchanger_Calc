@@ -271,7 +271,7 @@ class Fluid:
                         except Exception as chedl_exc:
                             raise FluidPropertyError(
                                 f"'{name}' CoolProp içerisinde bulunamadı. Hata: {e}. ChEDL/thermo fallback hatası: {chedl_exc}"
-                            )
+                            ) from chedl_exc
         else:
             if cp is None:
                 raise FluidPropertyError("Manuel kullanımda cp değeri zorunludur.")

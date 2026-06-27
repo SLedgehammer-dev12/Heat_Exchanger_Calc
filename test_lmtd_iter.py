@@ -405,10 +405,12 @@ class HeatExchangerRegressionTests(unittest.TestCase):
             ]
         }
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("urllib.request.urlopen", return_value=_FakeUrlOpen(b"bad-bytes")):
-                with self.assertRaises((ValueError, UpdaterError)):
-                    download_release_asset(update_info, tmpdir, app_kind="desktop")
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("urllib.request.urlopen", return_value=_FakeUrlOpen(b"bad-bytes")),
+        ):
+            with self.assertRaises((ValueError, UpdaterError)):
+                download_release_asset(update_info, tmpdir, app_kind="desktop")
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "HeatExchangerCalcDesktop-v1.zip")))
 
     def test_pyinstaller_specs_include_release_dependencies(self):

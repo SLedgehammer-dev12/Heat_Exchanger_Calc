@@ -94,19 +94,23 @@ class TestP2_StreamlitCache(unittest.TestCase):
     """P2: Streamlit session_state result caching."""
 
     def test_calc_cache_in_source(self):
-        source = open("app_web.py", encoding="utf-8").read()
+        with open("app_web.py", encoding="utf-8") as f:
+            source = f.read()
         self.assertIn("calc_cache", source)
 
     def test_render_calc_results_function(self):
-        source = open("app_web.py", encoding="utf-8").read()
+        with open("app_web.py", encoding="utf-8") as f:
+            source = f.read()
         self.assertIn("_render_calc_results", source)
 
     def test_st_session_state_key(self):
-        source = open("app_web.py", encoding="utf-8").read()
+        with open("app_web.py", encoding="utf-8") as f:
+            source = f.read()
         self.assertIn("st.session_state", source)
 
     def test_st_rerun_in_button_handler(self):
-        source = open("app_web.py", encoding="utf-8").read()
+        with open("app_web.py", encoding="utf-8") as f:
+            source = f.read()
         self.assertIn("st.rerun", source)
 
 
@@ -850,7 +854,8 @@ class TestP9_DesktopExchangerSelector(unittest.TestCase):
         self.assertEqual(result["hx"].exchanger_type, "double_pipe")
 
     def test_exchanger_type_in_source(self):
-        source = open("app_desktop.py", encoding="utf-8").read()
+        with open("app_desktop.py", encoding="utf-8") as f:
+            source = f.read()
         self.assertIn("combo_exchanger", source)
         self.assertIn("on_exchanger_changed", source)
         self.assertIn("EXCHANGER_LABEL_TO_INTERNAL", source)
