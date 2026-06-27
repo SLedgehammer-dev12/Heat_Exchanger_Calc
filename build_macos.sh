@@ -65,17 +65,18 @@ PYINSTALLER_BASE=(
 )
 
 # Desktop App
-echo "[2/5] Building Desktop app..."
+echo "[2/6] Building Desktop app..."
 pyinstaller \
     "${PYINSTALLER_BASE[@]}" \
     --windowed \
     --name HeatExchangerCalcDesktop \
     --icon app_icon.icns \
     --osx-bundle-identifier com.heat.exchanger.calc.desktop \
+    --codesign-identity - \
     run_desktop.py
 
 # Web Launcher
-echo "[3/5] Building Web launcher..."
+echo "[3/6] Building Web launcher..."
 pyinstaller \
     "${PYINSTALLER_BASE[@]}" \
     --console \
@@ -88,13 +89,38 @@ pyinstaller \
     --hidden-import updater \
     --hidden-import version \
     --hidden-import logging_config \
+    --codesign-identity - \
     --collect-all streamlit \
     --copy-metadata streamlit \
     --add-data "app_web.py:." \
     run_web.py
 
+# Deep code-sign all frameworks inside the bundle
+echo "[4/6] Deep code-signing frameworks..."
+
+# Desktop: .app bundle — --deep signs everything inside
+if [[ -d "dist/HeatExchangerCalcDesktop.app" ]]; then
+    codesign --force --deep -s - "dist/HeatExchangerCalcDesktop.app"
+    codesign -v "dist/HeatExchangerCalcDesktop.app" && echo "  ✅ Desktop .app signed"
+fi
+
+# Web: regular folder — sign every .framework and .dylib individually
+if [[ -d "dist/HeatExchangerCalcWeb/_internal" ]]; then
+    echo "  Signing Python.framework..."
+    find "dist/HeatExchangerCalcWeb/_internal" -name "Python.framework" -maxdepth 2 -type d 2>/dev/null | while read -r fw; do
+        codesign --force --deep -s - "$fw" 2>/dev/null || true
+    done
+    echo "  Signing .dylib and .so libraries..."
+    find "dist/HeatExchangerCalcWeb/_internal" \( -name "*.dylib" -o -name "*.so" \) 2>/dev/null | while read -r lib; do
+        codesign --force -s - "$lib" 2>/dev/null || true
+    done
+    echo "  Signing main executable..."
+    codesign --force -s - "dist/HeatExchangerCalcWeb/HeatExchangerCalcWeb" 2>/dev/null || true
+    echo "  ✅ Web binary signed"
+fi
+
 # Create DMG
-echo "[4/5] Creating DMG images..."
+echo "[5/6] Creating DMG images..."
 hdiutil create -volname "HeatExchangerCalcDesktop" \
     -srcfolder "dist/HeatExchangerCalcDesktop.app" \
     -ov -format UDZO \
@@ -106,7 +132,7 @@ hdiutil create -volname "HeatExchangerCalcWeb" \
     "release/HeatExchangerCalcWeb-v${VERSION}-macos-${ARCH}.dmg"
 
 # Checksums
-echo "[5/5] Generating SHA256 checksums..."
+echo "[6/6] Generating SHA256 checksums..."
 cd release && shasum -a 256 *.dmg > SHA256SUMS.txt && cd ..
 
 echo ""
