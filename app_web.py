@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -660,7 +661,7 @@ with tab_inputs:
 with tab_geom:
     st.subheader("Isı Değiştirici Özellikleri")
 
-    geom_dict = {}
+    geom_dict: dict[str, Any] = {}
     hot_is_tube = False
 
     if u_calc_mode == U_MODE_OPTIONS[0]:
@@ -845,14 +846,14 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
     for h in root_logger.handlers[:]:
         if getattr(h, "_streamlit_run_handler", False):
             root_logger.removeHandler(h)
-    handler._streamlit_run_handler = True
+    handler._streamlit_run_handler = True  # type: ignore[attr-defined]
     root_logger.addHandler(handler)
 
     with st.spinner("Termodinamik ve ısı transferi denklemleri çözülüyor..."):
         root_logger.info("Hesaplama başlatıldı.")
         hx = FinTubeHeatExchanger(
-            hot_fluid_obj,
-            cold_fluid_obj,
+            hot_fluid_obj,  # type: ignore[arg-type]
+            cold_fluid_obj,  # type: ignore[arg-type]
             U=1.0,
             A=1.0,
             flow_type=FLOW_MAP[flow_type],
@@ -913,8 +914,8 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 m_hot = to_kg_s(m_hot_raw, u_m_hot, hot_fluid_obj.density)
                 m_cold = to_kg_s(m_cold_raw, u_m_cold, cold_fluid_obj.density)
                 hx = FinTubeHeatExchanger(
-                    hot_fluid_obj,
-                    cold_fluid_obj,
+                    hot_fluid_obj,  # type: ignore[arg-type]
+                    cold_fluid_obj,  # type: ignore[arg-type]
                     U=1.0,
                     A=1.0,
                     flow_type=FLOW_MAP[flow_type],

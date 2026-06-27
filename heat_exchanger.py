@@ -276,7 +276,7 @@ class Fluid:
             if cp is None:
                 raise FluidPropertyError("Manuel kullanımda cp değeri zorunludur.")
             self.cp = cp
-            self.density = density
+            self.density = density  # type: ignore[assignment]
 
         self.cp = _require_positive(f"{self.name} cp", self.cp)
         if self.density is not None:
@@ -655,7 +655,7 @@ class FinTubeHeatExchanger:
         Q_max = C_min * (T_hot_in - T_cold_in)
 
         max_eps = C_min / (C_h + C_c) if self.flow_type == "parallel" else 0.999
-        warnings = []
+        warnings: list[str] = []
 
         def objective(eps):
             Q = eps * Q_max
@@ -875,7 +875,7 @@ class FinTubeHeatExchanger:
         k_wall = geom["k_wall"]
         R_f_i = float(geom.get("R_f_i", 0.0) or 0.0)
         R_f_o = float(geom.get("R_f_o", 0.0) or 0.0)
-        warnings = []
+        warnings: list[str] = []
         if R_f_i < 0 or R_f_o < 0:
             raise InvalidInputError("Fouling dirençleri negatif olamaz.")
 

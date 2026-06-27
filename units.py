@@ -1,6 +1,8 @@
+from typing import Any
+
 import pint
 
-_ureg = pint.UnitRegistry()
+_ureg: Any = pint.UnitRegistry()
 _ureg.define("degC = kelvin; offset: 273.15")
 _ureg.define("degF = 5/9 * kelvin; offset: 255.37222222")
 
