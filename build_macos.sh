@@ -74,7 +74,6 @@ pyinstaller \
     --osx-bundle-identifier com.heat.exchanger.calc.desktop \
     --codesign-identity - \
     --hidden-import app_desktop \
-    --collect-all PyQt5 \
     run_desktop.py
 
 # Web Launcher  (--windowed for .app bundle = deep-signable)
