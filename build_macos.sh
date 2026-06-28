@@ -31,6 +31,12 @@ HIDDEN_IMPORTS=(
     --hidden-import helpers
     --hidden-import correlations
     --hidden-import plot_theme
+    --hidden-import fluids_db
+    --hidden-import heat_exchanger
+    --hidden-import logging_config
+    --hidden-import reporting
+    --hidden-import updater
+    --hidden-import version
 )
 
 COLLECT_ARGS=(
@@ -59,6 +65,7 @@ DATA_DIRS=(
 PYINSTALLER_BASE=(
     --noconfirm
     --onedir
+    --paths .
     "${HIDDEN_IMPORTS[@]}"
     "${COLLECT_ARGS[@]}"
     "${EXCLUDES[@]}"
