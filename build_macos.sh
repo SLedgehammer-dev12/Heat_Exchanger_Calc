@@ -41,6 +41,7 @@ COLLECT_ARGS=(
     --collect-data pint
     --collect-data iapws
     --collect-all reportlab
+    --collect-all numpy
 )
 
 EXCLUDES=(
