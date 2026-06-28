@@ -5,7 +5,7 @@ import sys
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QAction,
@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -585,10 +586,16 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
 
-        # --- SOL PANEL ---
+        # --- SOL PANEL (scrollable) ---
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_panel.setMaximumWidth(450)
+
+        scroll_area.setWidget(left_panel)
 
         # 1. Konfigürasyon
         group_config = QGroupBox("⚙️ Ayarlar")
@@ -616,7 +623,12 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_u_mode.addItems(["Basit Mod (Manuel U Değeri)", "Geometrik Mod (Malzeme ile Hesapla)"])
         self.combo_u_mode.currentTextChanged.connect(self.toggle_u_mode)
 
+        self.combo_exchanger = QComboBox()
+        self.combo_exchanger.addItems(list(EXCHANGER_LABEL_TO_INTERNAL.keys()))
+        self.combo_exchanger.currentIndexChanged.connect(self.on_exchanger_changed)
+
         form_config.addRow("Hesap Amacı:", self.combo_purpose)
+        form_config.addRow("Eşanjör Tipi:", self.combo_exchanger)
         form_config.addRow("Akış Tipi:", self.combo_flow)
         form_config.addRow("Ana Çözücü Alg.:", self.combo_method)
         form_config.addRow("U Modu:", self.combo_u_mode)
@@ -825,11 +837,6 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_fin_type.addItems(["Dairesel (Annular)", "Düz (Rectangular)"])
         self.chk_finned.toggled.connect(self.toggle_finned)
 
-        self.combo_exchanger = QComboBox()
-        self.combo_exchanger.addItems(list(EXCHANGER_LABEL_TO_INTERNAL.keys()))
-        self.combo_exchanger.currentIndexChanged.connect(self.on_exchanger_changed)
-
-        form_geo.addRow("Eşanjör Tipi:", self.combo_exchanger)
         form_geo.addRow("Dış Çap (Do):", self.spin_do)
         form_geo.addRow("İç Çap (Di):", self.spin_di)
         form_geo.addRow("Boru Uzunluğu:", self.spin_l)
@@ -865,7 +872,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.on_exchanger_changed()
 
         left_layout.addStretch()
-        main_layout.addWidget(left_panel)
+        main_layout.addWidget(scroll_area)
 
         # --- SAĞ PANEL (Sekmeler - Sonuçlar) ---
         self.tabs = QTabWidget()
