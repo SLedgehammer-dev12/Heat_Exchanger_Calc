@@ -1,6 +1,8 @@
 import os
 import sys
 
+from app_desktop import HeatExchangerDesktopApp
+
 
 def resource_path(relative_path):
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -9,8 +11,6 @@ def resource_path(relative_path):
 
 def main():
     from PyQt5.QtWidgets import QApplication
-
-    from app_desktop import HeatExchangerDesktopApp
 
     app = QApplication(sys.argv)
     ex = HeatExchangerDesktopApp()
