@@ -23,7 +23,7 @@ icon_path = 'app_icon.icns' if sys.platform == 'darwin' else 'app_icon.ico'
 
 
 a = Analysis(
-    ['run_desktop.py'],
+    ['app_desktop.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

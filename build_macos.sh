@@ -73,8 +73,7 @@ pyinstaller \
     --icon app_icon.icns \
     --osx-bundle-identifier com.heat.exchanger.calc.desktop \
     --codesign-identity - \
-    --hidden-import app_desktop \
-    run_desktop.py
+    app_desktop.py
 
 # Web Launcher  (--windowed for .app bundle = deep-signable)
 echo "[3/5] Building Web launcher..."

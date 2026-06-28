@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -8,6 +9,7 @@ from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QAction,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -1506,3 +1508,10 @@ class HeatExchangerDesktopApp(QMainWindow):
     def _calculate_impl(self):
         payload = compute_desktop_calculation(self.create_calculation_snapshot())
         self.apply_calculation_result(payload)
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    ex = HeatExchangerDesktopApp()
+    ex.show()
+    sys.exit(app.exec_())
