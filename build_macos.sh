@@ -37,6 +37,7 @@ HIDDEN_IMPORTS=(
     --hidden-import reporting
     --hidden-import updater
     --hidden-import version
+    --hidden-import scipy._external.array_api_compat.numpy.fft
 )
 
 COLLECT_ARGS=(
@@ -48,6 +49,7 @@ COLLECT_ARGS=(
     --collect-data iapws
     --collect-all reportlab
     --collect-all numpy
+    --collect-submodules scipy._external
 )
 
 EXCLUDES=(
