@@ -49,7 +49,7 @@ COLLECT_ARGS=(
     --collect-data iapws
     --collect-all reportlab
     --collect-all numpy
-    --collect-submodules scipy._external
+    --collect-all scipy
 )
 
 EXCLUDES=(
