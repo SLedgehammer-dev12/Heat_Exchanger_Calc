@@ -50,6 +50,7 @@ COLLECT_ARGS=(
     --collect-all reportlab
     --collect-all numpy
     --collect-all scipy
+    --collect-all certifi
 )
 
 EXCLUDES=(

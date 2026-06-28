@@ -31,7 +31,7 @@ def apply_theme() -> None:
         "axes.titlesize": 15,
         "axes.titleweight": "bold",
         "axes.labelsize": 13,
-        "axes.labelweight": "semibold",
+        "axes.labelweight": "bold",
         "axes.facecolor": "#ffffff",
         "axes.edgecolor": "#cbd5e1",
         "axes.linewidth": 1.0,

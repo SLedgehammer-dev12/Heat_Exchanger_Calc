@@ -12,6 +12,7 @@ authors = [{name = "Heat Exchanger Calc Team"}]
 readme = "README.md"
 
 dependencies = [
+    "certifi>=2024",
     "CoolProp>=6.8",
     "fluids>=1.3",
     "ht>=1.2",

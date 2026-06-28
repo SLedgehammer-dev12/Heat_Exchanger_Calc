@@ -2,12 +2,17 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import urllib.error
 import urllib.request
 import webbrowser
 
+import certifi
+
 from exceptions import UpdaterError
 from version import GITHUB_REPO, VERSION
+
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def _parse_version(value):
@@ -32,7 +37,7 @@ def check_for_update(timeout=5):
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=_SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
