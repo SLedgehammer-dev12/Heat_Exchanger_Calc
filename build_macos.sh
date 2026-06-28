@@ -11,7 +11,7 @@ rm -rf build dist release .venv
 mkdir -p release
 
 # Python virtual environment
-echo "[1/5] Setting up virtual environment..."
+echo "[1/6] Setting up virtual environment..."
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip --quiet
@@ -65,8 +65,8 @@ PYINSTALLER_BASE=(
     "${DATA_DIRS[@]}"
 )
 
-# Desktop App
-echo "[2/5] Building Desktop app..."
+# Desktop App (.app bundle)
+echo "[2/6] Building Desktop app..."
 pyinstaller \
     "${PYINSTALLER_BASE[@]}" \
     --windowed \
@@ -76,8 +76,17 @@ pyinstaller \
     --codesign-identity - \
     app_desktop.py
 
-# Web Launcher  (--windowed for .app bundle = deep-signable)
-echo "[3/5] Building Web launcher..."
+# Desktop Debug (--console, terminal output for troubleshooting)
+echo "[3/6] Building Desktop Debug (console)..."
+pyinstaller \
+    "${PYINSTALLER_BASE[@]}" \
+    --console \
+    --name HeatExchangerCalcDesktopDebug \
+    --icon app_icon.icns \
+    app_desktop.py
+
+# Web Launcher (.app bundle)
+echo "[4/6] Building Web launcher..."
 pyinstaller \
     "${PYINSTALLER_BASE[@]}" \
     --windowed \
@@ -97,29 +106,74 @@ pyinstaller \
     --add-data "app_web.py:." \
     run_web.py
 
-# Deep code-sign each .app bundle with single ad-hoc identity
-echo "[4/5] Deep code-signing..."
-for app in "dist/HeatExchangerCalcDesktop.app" "dist/HeatExchangerCalcWeb.app"; do
-    if [[ -d "$app" ]]; then
-        codesign --force --deep -s - "$app"
-        codesign -v --deep "$app" && echo "  ✅ $(basename "$app") signed"
-    else
-        echo "  ❌ $app not found!"
-        exit 1
+# Web Debug (--console, terminal output for troubleshooting)
+echo "[5/6] Building Web Debug (console)..."
+pyinstaller \
+    "${PYINSTALLER_BASE[@]}" \
+    --console \
+    --name HeatExchangerCalcWebDebug \
+    --icon app_icon.icns \
+    --hidden-import app_web \
+    --hidden-import fluids_db \
+    --hidden-import heat_exchanger \
+    --hidden-import reporting \
+    --hidden-import updater \
+    --hidden-import version \
+    --hidden-import logging_config \
+    --collect-all streamlit \
+    --copy-metadata streamlit \
+    --add-data "app_web.py:." \
+    run_web.py
+
+# Code-sign .app bundles + console binaries
+echo "[6/6] Code-signing + packaging..."
+declare -a SIGN_TARGETS=(
+    "dist/HeatExchangerCalcDesktop.app"
+    "dist/HeatExchangerCalcDesktopDebug/HeatExchangerCalcDesktopDebug"
+    "dist/HeatExchangerCalcWeb.app"
+    "dist/HeatExchangerCalcWebDebug/HeatExchangerCalcWebDebug"
+)
+for target in "${SIGN_TARGETS[@]}"; do
+    if [[ -e "$target" ]]; then
+        if [[ -d "$target" ]]; then
+            codesign --force --deep -s - "$target"
+            codesign -v --deep "$target" && echo "  ✅ $(basename "$target") signed"
+        else
+            codesign --force -s - "$target"
+            codesign -v "$target" && echo "  ✅ $(basename "$target") signed"
+        fi
     fi
 done
 
-# Create DMG + checksums
-echo "[5/5] Creating DMG images..."
+# DMG: Desktop .app
 hdiutil create -volname "HeatExchangerCalcDesktop" \
     -srcfolder "dist/HeatExchangerCalcDesktop.app" \
     -ov -format UDZO \
     "release/HeatExchangerCalcDesktop-v${VERSION}-macos-${ARCH}.dmg"
 
+# DMG: Desktop Debug – pack folder into a temp layout then DMG
+mkdir -p release-tmp-desktop
+cp -R "dist/HeatExchangerCalcDesktopDebug" release-tmp-desktop/
+hdiutil create -volname "HeatExchangerCalcDesktopDebug" \
+    -srcfolder release-tmp-desktop \
+    -ov -format UDZO \
+    "release/HeatExchangerCalcDesktopDebug-v${VERSION}-macos-${ARCH}.dmg"
+rm -rf release-tmp-desktop
+
+# DMG: Web .app
 hdiutil create -volname "HeatExchangerCalcWeb" \
     -srcfolder "dist/HeatExchangerCalcWeb.app" \
     -ov -format UDZO \
     "release/HeatExchangerCalcWeb-v${VERSION}-macos-${ARCH}.dmg"
+
+# DMG: Web Debug
+mkdir -p release-tmp-web
+cp -R "dist/HeatExchangerCalcWebDebug" release-tmp-web/
+hdiutil create -volname "HeatExchangerCalcWebDebug" \
+    -srcfolder release-tmp-web \
+    -ov -format UDZO \
+    "release/HeatExchangerCalcWebDebug-v${VERSION}-macos-${ARCH}.dmg"
+rm -rf release-tmp-web
 
 # Checksums
 cd release && shasum -a 256 *.dmg > SHA256SUMS.txt && cd ..
