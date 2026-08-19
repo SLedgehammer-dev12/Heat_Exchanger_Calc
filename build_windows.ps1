@@ -62,7 +62,7 @@ $webArgs = @(
 pyinstaller @common @webArgs --console --name HeatExchangerCalcWeb run_web.py
 
 # --- Release packaging ---
-$version = "0.1.7"
+$version = (python -c "from version import VERSION; print(VERSION)").Trim()
 New-Item -ItemType Directory -Force -Path release | Out-Null
 
 Copy-Item "dist\HeatExchangerCalcDesktop.exe" "release\HeatExchangerCalcDesktop-v$version-windows-x64.exe" -Force

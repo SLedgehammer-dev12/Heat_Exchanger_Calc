@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="0.1.7"
+VERSION=$(python3 -c "from version import VERSION; print(VERSION)")
 ARCH=$(uname -m)
 
 echo "=== Heat Exchanger Calc v${VERSION} macOS Build ==="

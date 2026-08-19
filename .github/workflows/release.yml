@@ -89,7 +89,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Heat Exchanger Calc v${{ github.ref_name }}"
+          name: "Heat Exchanger Calc ${{ github.ref_name }}"
           body: "See [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/main/RELEASE_NOTES.md) for details."
           draft: false
           prerelease: false
