@@ -32,6 +32,7 @@ HIDDEN_IMPORTS=(
     --hidden-import correlations
     --hidden-import plot_theme
     --hidden-import standards
+    --hidden-import mechanical
     --hidden-import fluids_db
     --hidden-import heat_exchanger
     --hidden-import logging_config

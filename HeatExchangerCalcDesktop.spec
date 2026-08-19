@@ -8,7 +8,7 @@ binaries = []
 hiddenimports = [
     'scipy._cyutility', 'engineering_utils', 'reportlab',
     'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
-    'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards',
+    'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
 ]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')

@@ -62,6 +62,29 @@ LOCAL_LOSS_VELOCITY_HEADS_PER_PASS = 4.0
 TEMA_RHO_V2_LIMIT = 1500.0  # kg/(m·s^2) — aşımında impingement plate öner
 MAX_UNSUPPORTED_SPAN_FACTOR = 60.0  # baffle_spacing / D_o üst sınır (ön tarama)
 
+# Sieder-Tate çeper viskozite düzeltmesi: h *= (mu_b / mu_w)^0.14
+# Sadece mu(T) bağımlı akışkanlarda (CoolProp / IAPWS) uygulanır.
+SIEDER_TATE_CORRECTION = True
+SIEDER_TATE_ITERATIONS = 3  # çeper sıcaklığı sabit nokta iterasyonu sayısı
+
+# Gövde giriş/çıkış nozulları basınç kaybı (velocity head katsayısı, nozul başına)
+SHELL_NOZZLE_VELOCITY_HEADS = 1.0
+SHELL_NOZZLE_COUNT = 2  # giriş + çıkış
+
+# ASME Section VIII Div.1 mekanik tasarım varsayılanları
+ASME_DEFAULT_DESIGN_STRESS = 110.0e6  # tipik karbon çeliği izin verilen gerilme [Pa]
+ASME_DEFAULT_JOINT_EFFICIENCY = 0.85  # kaynaklı, kısmi RT
+ASME_DEFAULT_CORROSION_ALLOWANCE = 3.0e-3  # 3 mm korozyon payı [m]
+ASME_HYDROSTATIC_TEST_FACTOR = 1.3  # ASME UG-99: 1.3 × MAWP
+
+# API 661 (hava soğutmalı eşanjör - ACHE) limitleri
+API661_FACE_VELOCITY_LIMIT = 3.5  # m/s — maksimum hava yüzey hızı
+API661_TIP_SPEED_LIMIT = 60.0  # m/s — maksimum fan kanat ucu hızı
+
+# Bell-Delaware opsiyonel gövde tarafı modeli (rigorous rating)
+# h_o = h_id · J_c · J_l · J_b · J_s · J_r. False iken Kern metodu kullanılır.
+USE_BELL_DELAWARE = True
+
 
 BRIGGS_YOUNG_RE_RANGE = (1100, 18000)
 

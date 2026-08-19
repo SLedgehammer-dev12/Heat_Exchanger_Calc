@@ -41,6 +41,7 @@ class GeometryInput:
     tube_layout_angle: str = "30"  # "30" | "45" | "60" | "90" degrees
     shell_passes: int = 1
     tube_passes: int = 2  # Bowman F-faktörü N (1-N TEMA: boru geçiş sayısı)
+    nozzle_diameter: float = 0.0  # gövde nozul iç çapı [m] (0 ise D_shell'e bağlı tahmin)
 
     # Fouling
     R_f_i: float = 0.0  # inside fouling [m²·K/W]
@@ -98,6 +99,7 @@ class GeometryInput:
             tube_layout_angle=d.get("tube_layout_angle", "30"),
             shell_passes=int(d.get("shell_passes", 1)),
             tube_passes=int(d.get("tube_passes", 2)),
+            nozzle_diameter=d.get("nozzle_diameter", 0.0),
             R_f_i=d.get("R_f_i", 0.0),
             R_f_o=d.get("R_f_o", 0.0),
         )
@@ -125,6 +127,7 @@ class GeometryInput:
             "tube_layout_angle": self.tube_layout_angle,
             "shell_passes": self.shell_passes,
             "tube_passes": self.tube_passes,
+            "nozzle_diameter": self.nozzle_diameter,
             "R_f_i": self.R_f_i,
             "R_f_o": self.R_f_o,
         }

@@ -1,3 +1,89 @@
+# Heat Exchanger Calc v0.3.0
+
+Robustness, mechanical-design standards and two-phase UI release. Follows the
+peer code-review action plan (Faz A–F).
+
+## Robustness (Faz A)
+
+- **`logging_config.py` Permission Fix** — `get_log_dir()`/`setup_logging()` no
+  longer crash on restricted filesystems (macOS sandbox, read-only HOME). A
+  write-probe falls back to the system temp directory and finally to a console
+  `StreamHandler`, so app import and the test suite never fail on
+  `PermissionError`. The desktop/web layout is unaffected.
+- **pytest `pythonpath = ["."]`** — `[tool.pytest.ini_options]` now sets the
+  repo root on `sys.path`, so `pytest` runs cleanly from any working directory
+  (previously raised `ModuleNotFoundError` outside the repo).
+
+## Heat-Transfer Accuracy (Faz B)
+
+- **Sieder-Tate Viscosity Correction** — `h *= (μb/μw)^0.14` is now applied to
+  both tube and shell side via a bounded wall-temperature fixed-point iteration
+  (`Fluid.viscosity_at(T)` re-evaluates CoolProp/IAPWS viscosity at the wall).
+  Gated by `SIEDER_TATE_CORRECTION`; manual fluids (constant μ) are skipped.
+- **Shell Nozzle Pressure Drop** — `ΔP_nozzle = N_noz · K · ρ·v_noz²/2`
+  (`K = SHELL_NOZZLE_VELOCITY_HEADS = 1.0`, 2 nozzles) is added to the total
+  shell ΔP. New optional `nozzle_diameter` geometry input (defaults to
+  `0.4·D_shell`).
+
+## Mechanical-Design Standards (Faz C)
+
+- **New `mechanical.py`** — ASME Section VIII Div.1 UG-27 minimum wall
+  thickness (`t = P·R/(S·E − 0.6P) + CA`), ASME UG-99 hydrostatic test pressure
+  (`1.3 × MAWP`), and API 661 ACHE checks (face velocity ≤ 3.5 m/s, fan tip
+  speed ≤ 60 m/s). A `mechanical_design_report(geom)` helper drives a new
+  "Mekanik Tasarım" section in both TXT and PDF reports (gated on design
+  pressure). Configurable defaults: design stress, joint efficiency, corrosion
+  allowance.
+
+## Two-Phase Modes in UI (Faz D)
+
+- **Condenser / Evaporator** — The Cr=0, `h_fg`-based `solve_condenser` /
+  `solve_evaporator` solvers are now exposed under "Hesap Amacı" in both the
+  PyQt5 desktop app and the Streamlit web app, with a new latent-heat `h_fg`
+  input. The solver branch and report context handle the two-phase result.
+
+## Code Architecture (Faz E)
+
+- **`solve_with_refinement()`** — The 2-pass midpoint-temperature property
+  refinement loop (previously duplicated verbatim in desktop and web) is now
+  encapsulated in `FinTubeHeatExchanger.solve_with_refinement()`; both front-ends
+  supply a small rebuild callback. Removes ~50 duplicated lines per front-end.
+
+## UI / Ergonomics (Faz F)
+
+- **Pump / Fan Efficiency** — `pump_efficiency` / `fan_efficiency` are now
+  user-adjustable (desktop spin boxes, web sliders) and applied per-side via
+  `PUMP_EFFICIENCY`/`FAN_EFFICIENCY` defaults on each exchanger instance.
+- **Language Selector (i18n)** — `i18n.py` gains `set_language()` /
+  `get_language()`; both UIs expose a TR/EN selector and `_()` is wired into
+  report titles and key strings.
+- **Bell-Delaware Shell Model (optional)** — New `_bell_delaware_shell_h`
+  computes `h_o = h_id · J_c · J_l · J_b · J_s · J_r` for shell-and-tube
+  rigorous rating, gated by `USE_BELL_DELAWARE` (default on) with Kern fallback.
+
+## Testing & Verification
+
+- **144 tests pass** (up from 131) — new coverage for Sieder-Tate, nozzle ΔP,
+  ASME/API 661, `solve_with_refinement`, Bell-Delaware and two-phase UI wiring.
+  `ruff` clean, `mypy` clean (27 source files). Offscreen PyQt5 UI sweep
+  verified language selector, h_fg, pump/fan efficiency and two-phase purpose
+  options. New `mechanical.py` added to all PyInstaller build configs.
+
+## Release Assets
+
+### Windows
+- `HeatExchangerCalcDesktop-v0.3.0-windows-x64.exe`
+- `HeatExchangerCalcWeb-v0.3.0-windows-x64.exe`
+
+### macOS
+- `HeatExchangerCalcDesktop-v0.3.0-macos-arm64.dmg`
+- `HeatExchangerCalcWeb-v0.3.0-macos-arm64.dmg`
+
+### All platforms
+- `SHA256SUMS.txt`
+
+---
+
 # Heat Exchanger Calc v0.2.0
 
 Major engineering accuracy and industrial scope release.

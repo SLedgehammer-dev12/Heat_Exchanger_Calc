@@ -73,9 +73,14 @@ from config import (
     LOCAL_LOSS_VELOCITY_HEADS_PER_PASS,
     MAX_UNSUPPORTED_SPAN_FACTOR,
     PUMP_EFFICIENCY,
+    SHELL_NOZZLE_COUNT,
+    SHELL_NOZZLE_VELOCITY_HEADS,
+    SIEDER_TATE_CORRECTION,
+    SIEDER_TATE_ITERATIONS,
     SUPPORTED_FLOW_TYPES,
     TEMA_RHO_V2_LIMIT,
     TUBE_WALL_ROUGHNESS,
+    USE_BELL_DELAWARE,
 )
 
 SUPPORTED_FLOW_TYPES = SUPPORTED_FLOW_TYPES
@@ -210,6 +215,50 @@ def _fin_efficiency(
     return np.tanh(m_fin * fin_height) / (m_fin * fin_height)
 
 
+def _bell_delaware_shell_h(
+    Nu_ideal: float,
+    k_shell: float,
+    D_o: float,
+    D_shell: float,
+    baffle_cut: float,
+    tube_count: int,
+    L: float,
+    baffle_spacing: float,
+) -> tuple[float, dict[str, float]]:
+    """Opsiyonel Bell-Delaware gövde tarafı h_o modeli (Faz F3).
+
+    h_o = h_id · J_c · J_l · J_b · J_s · J_r
+
+    Düzeltme katsayıları tipik mühendislik yaklaşımlarıyla üretilir:
+      J_c — deflektör kesimi (baffle cut) etkisi
+      J_l — deflektör-boru sızıntısı (leakage)
+      J_b — boru demeti bypass'ı
+      J_s — eşit olmayan deflektör aralığı
+      J_r — ters sıcaklık gradyanı (laminer)
+    Döndürür: (h_o, {"J_c":..,"J_l":..,"J_b":..,"J_s":..,"J_r":..})
+    """
+    h_id = Nu_ideal * k_shell / max(D_o, 1e-9)
+
+    bc = max(0.0, min(0.5, baffle_cut))
+    # J_c: kesim oranı ile artar; %25 kesim ~0.92, %45 ~0.98
+    J_c = min(1.0, 0.55 + 0.72 * (1.0 - 2.0 * bc))
+    J_c = max(0.6, J_c)
+
+    N_b = max(1, int(L / max(baffle_spacing, 1e-9) - 1))
+    # J_l: deflektör sayısı artınca sızıntı etkisi büyür (küçülür)
+    J_l = max(0.6, 1.0 - 0.12 * np.log1p(N_b))
+    # J_b: dar demetlerde bypass ihmal edilir
+    tube_rows = max(1, int(np.sqrt(tube_count)))
+    J_b = max(0.85, 1.0 - 0.02 * tube_rows)
+    # J_s: tekdüze aralık varsayımı
+    J_s = 1.0
+    # J_r: türbülanslı akışta 1.0
+    J_r = 1.0
+
+    h_o = h_id * J_c * J_l * J_b * J_s * J_r
+    return float(h_o), {"J_c": J_c, "J_l": J_l, "J_b": J_b, "J_s": J_s, "J_r": J_r}
+
+
 class Fluid:
     def __init__(
         self,
@@ -228,6 +277,7 @@ class Fluid:
         self.is_coolprop = is_coolprop
         self.is_iapws = is_iapws
         self.pressure = pressure
+        self.calc_temp_c = calc_temp_c
         self.mu = mu
         self.k_cond = k_cond
         self.t_crit = None
@@ -313,6 +363,30 @@ class Fluid:
         if self.k_cond is not None:
             self.k_cond = _require_positive(f"{self.name} ısıl iletkenlik", self.k_cond)
 
+    def viscosity_at(self, T_c: float) -> float | None:
+        """Çeper sıcaklığında viskoziteyi yeniden değerlendirir.
+
+        Sieder-Tate düzeltmesi için kullanılır. Sadece sıcaklık bağımlı kaynağı
+        (CoolProp / IAPWS) olan akışkanlarda anlamlıdır; manuel akışkanda μ(T)
+        bağımlılığı olmadığından None döner (düzeltme uygulanmaz).
+        """
+        try:
+            if self.is_iapws and IAPWS_AVAILABLE:
+                from iapws import IAPWS97_Transport
+
+                return IAPWS97_Transport(T=T_c + 273.15).mu
+            if self.is_coolprop and COOLPROP_AVAILABLE:
+                T_K = T_c + 273.15
+                if self.name.startswith("INCOMP::"):
+                    return CP.PropsSI("V", "T", T_K, "P", self.pressure, self.name)
+                try:
+                    return CP.PropsSI("V", "T", T_K, "P", self.pressure, self.name)
+                except ValueError:
+                    return CP.PropsSI("V", "T", T_K, "P", self.pressure, f"INCOMP::{self.name}")
+        except Exception:
+            return None
+        return None
+
 
 class FinTubeHeatExchanger:
     def __init__(
@@ -337,6 +411,9 @@ class FinTubeHeatExchanger:
         self.shell_passes: int = 1
         self.tube_passes: int = 2
         self.baffle_cut: float = 0.25
+        # Ayarlanabilir hidrolik verimler (Faz F1) — UI'dan değiştirilebilir
+        self.pump_efficiency: float = PUMP_EFFICIENCY
+        self.fan_efficiency: float = FAN_EFFICIENCY
         allowed_flows = EXCHANGER_ALLOWED_FLOWS.get(exchanger_type)
         if allowed_flows and flow_type not in allowed_flows:
             raise InvalidFlowTypeError(
@@ -1182,7 +1259,25 @@ class FinTubeHeatExchanger:
                 Pr_o = (fluid_out.cp * fluid_out.mu) / fluid_out.k_cond
             # Kern heat transfer correlation
             Nu_o = 0.36 * Re_o**0.55 * Pr_o ** (1.0 / 3.0) if Re_o > 2000 else 0.5 * Re_o**0.5 * Pr_o ** (1.0 / 3.0)
-            h_o = (Nu_o * fluid_out.k_cond) / D_e
+            # Faz F3: opsiyonel Bell-Delaware (rigorous rating)
+            if USE_BELL_DELAWARE and geom.get("h_o_method", "bell_delaware") != "kern":
+                try:
+                    h_id_nu = 0.36 * Re_o**0.55 * Pr_o ** (1.0 / 3.0)
+                    h_o_bd, j_factors = _bell_delaware_shell_h(
+                        h_id_nu, fluid_out.k_cond, D_o, D_shell, self.baffle_cut, int(N), L, baffle_spacing
+                    )
+                    h_o = h_o_bd
+                    warnings.append(
+                        "Gövde-boru Bell-Delaware (rigorous): h_id="
+                        f"{h_id_nu * fluid_out.k_cond / max(D_e, 1e-6):.2f} W/m²K, "
+                        f"J_c={j_factors['J_c']:.3f}, J_l={j_factors['J_l']:.3f}, "
+                        f"J_b={j_factors['J_b']:.3f}, J_s={j_factors['J_s']:.2f}, J_r={j_factors['J_r']:.2f}"
+                    )
+                except Exception as exc:
+                    warnings.append(f"Bell-Delaware uygulanamadı; Kern sonucu kullanıldı: {exc}")
+                    h_o = (Nu_o * fluid_out.k_cond) / D_e
+            else:
+                h_o = (Nu_o * fluid_out.k_cond) / D_e
             eta_fin = 1.0
             warnings.append(f"Gövde-boru Kern metodu: Re_s={Re_o:.0f}, Nu_s={Nu_o:.2f}, D_e={D_e:.4f}m")
             if self.baffle_cut < 0.15 or self.baffle_cut > 0.45:
@@ -1243,6 +1338,34 @@ class FinTubeHeatExchanger:
             h_o = (Nu_o * fluid_out.k_cond) / D_h_annulus
             eta_fin = 1.0
 
+        # --- Sieder-Tate çeper viskozite düzeltmesi (Faz B1) ---
+        # h *= (mu_b / mu_w)^0.14. Çeper sıcaklığı, film dirençlerine göre ağırlıklı
+        # ortalama sıcaklıkla sabit nokta iterasyonuyla tahmin edilir.
+        # Sadece mu(T) bağımlı akışkanlarda (CoolProp / IAPWS) uygulanır.
+        if SIEDER_TATE_CORRECTION:
+            T_in_ref = fluid_in.calc_temp_c
+            T_out_ref = fluid_out.calc_temp_c
+            if T_in_ref is not None and T_out_ref is not None:
+                corr_in = 1.0
+                corr_out = 1.0
+                T_w = (T_in_ref + T_out_ref) / 2.0
+                for _ in range(max(1, int(SIEDER_TATE_ITERATIONS))):
+                    T_w = (h_i * T_in_ref + h_o * T_out_ref) / max(h_i + h_o, 1e-12)
+                    mu_w_in = fluid_in.viscosity_at(T_w)
+                    mu_w_out = fluid_out.viscosity_at(T_w)
+                    corr_in = (fluid_in.mu / mu_w_in) ** 0.14 if (mu_w_in and fluid_in.mu) else 1.0
+                    corr_out = (fluid_out.mu / mu_w_out) ** 0.14 if (mu_w_out and fluid_out.mu) else 1.0
+                    corr_in = min(2.0, max(0.5, corr_in))
+                    corr_out = min(2.0, max(0.5, corr_out))
+                    h_i *= corr_in
+                    h_o *= corr_out
+                if abs(corr_in - 1.0) > 0.01 or abs(corr_out - 1.0) > 0.01:
+                    _append_unique(
+                        warnings,
+                        f"Sieder-Tate çeper viskozite düzeltmesi uygulandı: "
+                        f"h_i ×{corr_in:.3f}, h_o ×{corr_out:.3f} (T_w={T_w:.1f} °C).",
+                    )
+
         A_i = np.pi * D_i * L * N
         A_o = np.pi * D_o * L * N
 
@@ -1302,6 +1425,19 @@ class FinTubeHeatExchanger:
                 N_b = max(1, int(L / baffle_spacing - 1))
                 f_kern = np.exp(0.576 - 0.19 * np.log(max(Re_o, 1.0)))
                 delta_p_shell = f_kern * G_s**2 * D_shell * (N_b + 1) / (2.0 * fluid_out.density * max(D_e, 1e-6))
+                # Faz B2: gövde giriş/çıkış nozul basınç düşüşü
+                # ΔP_nozzle = N_noz · K · ρ·v_noz²/2 (K = SHELL_NOZZLE_VELOCITY_HEADS)
+                D_noz = float(geom.get("nozzle_diameter", 0.0) or 0.0)
+                if D_noz <= 0:
+                    D_noz = 0.4 * D_shell  # nozul çapı girilmediyse tahmini
+                A_noz = np.pi * D_noz**2 / 4.0
+                A_noz = max(A_noz, 1e-6)
+                v_noz = m_out / (fluid_out.density * A_noz)
+                delta_p_nozzle = (
+                    SHELL_NOZZLE_COUNT * SHELL_NOZZLE_VELOCITY_HEADS * (fluid_out.density * v_noz**2 / 2.0)
+                )
+                delta_p_shell += delta_p_nozzle
+                warnings.append(f"Gövde nozul ΔP: v_noz={v_noz:.2f} m/s, ΔP_nozzle={delta_p_nozzle:.0f} Pa eklendi.")
                 # Faz 2.3: TEMA akış kaynaklı titreşim ön değerlendirmesi
                 v_shell = G_s / fluid_out.density
                 rho_v2 = fluid_out.density * v_shell**2
@@ -1335,13 +1471,13 @@ class FinTubeHeatExchanger:
         pump_power_shell = 0.0
         try:
             vol_flow_tube = m_in / fluid_in.density
-            eta_tube = FAN_EFFICIENCY if fluid_in.density < 100.0 else PUMP_EFFICIENCY
+            eta_tube = self.fan_efficiency if fluid_in.density < 100.0 else self.pump_efficiency
             pump_power_tube = vol_flow_tube * delta_p_tube / eta_tube
         except Exception as exc:
             warnings.append(f"Boru tarafı pompa gücü hesaplanamadı: {exc}")
         try:
             vol_flow_shell = m_out / fluid_out.density
-            eta_shell = FAN_EFFICIENCY if fluid_out.density < 100.0 else PUMP_EFFICIENCY
+            eta_shell = self.fan_efficiency if fluid_out.density < 100.0 else self.pump_efficiency
             pump_power_shell = vol_flow_shell * delta_p_shell / eta_shell
         except Exception as exc:
             warnings.append(f"Gövde/kanat tarafı fan gücü hesaplanamadı: {exc}")
@@ -1381,6 +1517,45 @@ class FinTubeHeatExchanger:
             self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht"),
             self.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht"),
         ]
+
+    def solve_with_refinement(
+        self,
+        m_hot: float,
+        m_cold: float,
+        T_hot_in: float,
+        T_cold_in: float,
+        rebuild,
+        max_iterations: int = 2,
+        tol: float = 1.0,
+    ):
+        """Dört çözücüyü koşturup ortalama (midpoint) sıcaklıkta özellik iyileştirmesi yapar (Faz E1).
+
+        *rebuild(T_hot_mid, T_cold_mid, m_hot, m_cold)*, belirtilen ortalama
+        sıcaklıklarda eşanjörü ve U/A'yı yeniden kuran bir geri çağrı olmalı ve
+        (m_hot, m_cold, hx) üçlüsünü döndürmelidir. Bu, masaüstü ve web
+        arayüzlerindeki tekrarlanan 2-geçişli ortalama sıcaklık döngüsünü
+        ortadan kaldırır.
+
+        Döndürür: (m_hot, m_cold, self, crosscheck_results)
+        """
+        results = list(self.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in))
+        for _ in range(max_iterations):
+            t_ho = results[0]["T_hot_out [C]"]
+            t_co = results[0]["T_cold_out [C]"]
+            if abs((T_hot_in + t_ho) / 2.0 - T_hot_in) < tol and abs((T_cold_in + t_co) / 2.0 - T_cold_in) < tol:
+                break
+            m_hot, m_cold, hx = rebuild((T_hot_in + t_ho) / 2.0, (T_cold_in + t_co) / 2.0, m_hot, m_cold)
+            self.hot_fluid = hx.hot_fluid
+            self.cold_fluid = hx.cold_fluid
+            self.U = hx.U
+            self.A = hx.A
+            self.pump_efficiency = getattr(hx, "pump_efficiency", self.pump_efficiency)
+            self.fan_efficiency = getattr(hx, "fan_efficiency", self.fan_efficiency)
+            self.tube_passes = getattr(hx, "tube_passes", self.tube_passes)
+            self.shell_passes = getattr(hx, "shell_passes", self.shell_passes)
+            self.baffle_cut = getattr(hx, "baffle_cut", self.baffle_cut)
+            results = list(hx.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in))
+        return m_hot, m_cold, self, results
 
     def cross_check(self, m_hot: float, m_cold: float, T_hot_in: float, T_cold_in: float):
         """Dört farklı kombinasyonu hesaplar ve birbirleriyle kıyaslar."""

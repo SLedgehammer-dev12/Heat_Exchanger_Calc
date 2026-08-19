@@ -12,6 +12,7 @@ from engineering_utils import (
     to_celsius,
     to_kg_s,
 )
+from i18n import set_language
 from logging_config import setup_logging
 
 LOG_FILE = setup_logging("web")
@@ -59,6 +60,8 @@ def _get_allowed_flow_labels(exch_type_internal: str) -> list[str]:
 CALC_PURPOSE_OPTIONS = [
     "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)",
     "Performans Değerlendirmesi (Verim Bul)",
+    "Yoğuşturucu (Kondenser)",
+    "Buharlaştırıcı (Evaporatör)",
 ]
 SOLVER_OPTIONS = [
     "Kendi Algoritmamız (Epsilon-NTU)",
@@ -96,6 +99,9 @@ DEFAULT_STATE = {
     "exch_type": "Kanatçıklı Borulu",
     "flow_type": FLOW_OPTIONS[0],
     "calc_purpose": CALC_PURPOSE_OPTIONS[0],
+    "h_fg": 2_200_000,
+    "pump_efficiency": 0.70,
+    "fan_efficiency": 0.60,
     "solver_method": SOLVER_OPTIONS[0],
     "u_calc_mode": U_MODE_OPTIONS[0],
     "hot_fluid_sel": "Doğal Gaz Türbin Egzoz Gazı (Manuel)",
@@ -480,11 +486,21 @@ if st.sidebar.button("Güncellemeyi Kontrol Et"):
     st.rerun()
 
 st.sidebar.header("Genel Ayarlar")
+_ui_lang = st.sidebar.selectbox("Dil / Language", ["Türkçe (TR)", "English (EN)"], index=0)
+set_language("en" if "EN" in _ui_lang else "tr")
 calc_purpose = st.sidebar.radio(
     "Hesaplama Amacı",
     CALC_PURPOSE_OPTIONS,
     index=safe_index(CALC_PURPOSE_OPTIONS, get_val("calc_purpose")),
 )
+h_fg = st.sidebar.number_input(
+    "Gizli Isı h_fg (J/kg) [Kondenser/Evaporatör]",
+    min_value=0.0,
+    value=float(get_val("h_fg") or 2_200_000),
+    step=50_000.0,
+)
+pump_eff = st.sidebar.slider("Pompa Verimi (sıvı)", 0.05, 1.0, float(get_val("pump_efficiency") or 0.70), 0.01)
+fan_eff = st.sidebar.slider("Fan Verimi (gaz)", 0.05, 1.0, float(get_val("fan_efficiency") or 0.60), 0.01)
 # Eşanjör tipi seçimi
 exch_type_label = st.sidebar.selectbox(
     "Eşanjör Tipi",
@@ -518,6 +534,9 @@ tab_inputs, tab_geom, tab_results, tab_crosscheck, tab_log = st.tabs(
 current_data = {
     "exch_type": exch_type_label,
     "calc_purpose": calc_purpose,
+    "h_fg": h_fg,
+    "pump_efficiency": pump_eff,
+    "fan_efficiency": fan_eff,
     "flow_type": flow_type,
     "solver_method": solver_method,
     "u_calc_mode": u_calc_mode,
@@ -944,6 +963,8 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             flow_type=FLOW_MAP[flow_type],
             exchanger_type=exch_type_internal,
         )
+        hx.pump_efficiency = float(pump_eff)
+        hx.fan_efficiency = float(fan_eff)
 
         geo_res = None
         if u_calc_mode == U_MODE_OPTIONS[1]:
@@ -967,51 +988,64 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             hx.A = Area
 
         try:
-            res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in)
-            crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
-
-            for _iter in range(2):
-                t_ho = res_custom["T_hot_out [C]"]
-                t_co = res_custom["T_cold_out [C]"]
-                T_hot_mid = (T_hot_in + t_ho) / 2.0
-                T_cold_mid = (T_cold_in + t_co) / 2.0
-                if abs(T_hot_mid - T_hot_in) < 1.0 and abs(T_cold_mid - T_cold_in) < 1.0:
-                    break
-
-                hot_data_mid = materialize_fluid_data(get_fluid_data(hot_fluid_sel), T_hot_mid)
-                cold_data_mid = materialize_fluid_data(get_fluid_data(cold_fluid_sel), T_cold_mid)
-                if hot_data_mid.get("is_iapws"):
-                    hot_fluid_obj = Fluid(name=hot_data_mid["name"], is_iapws=True, calc_temp_c=T_hot_mid)
-                elif hot_data_mid["is_coolprop"]:
-                    hot_fluid_obj = Fluid(name=hot_data_mid["name"], is_coolprop=True, calc_temp_c=T_hot_mid)
+            is_condenser = "Kondenser" in calc_purpose
+            is_evaporator = "Evaporatör" in calc_purpose
+            if is_condenser or is_evaporator:
+                if h_fg <= 0:
+                    st.error("❌ İki-fazlı hesap için gizli ısı (h_fg) girilmelidir.")
+                    st.stop()
+                if is_condenser:
+                    hx.hot_fluid.h_fg = h_fg
+                    res_custom = hx.solve_condenser(m_hot, m_cold, T_sat=T_hot_in, T_cold_in=T_cold_in, h_fg=h_fg)
                 else:
-                    hot_fluid_obj = build_manual_fluid(hot_data_mid, cp_hot, density_hot, mu_hot, k_hot)
-                if cold_data_mid.get("is_iapws"):
-                    cold_fluid_obj = Fluid(name=cold_data_mid["name"], is_iapws=True, calc_temp_c=T_cold_mid)
-                elif cold_data_mid["is_coolprop"]:
-                    cold_fluid_obj = Fluid(name=cold_data_mid["name"], is_coolprop=True, calc_temp_c=T_cold_mid)
-                else:
-                    cold_fluid_obj = build_manual_fluid(cold_data_mid, cp_cold, density_cold, mu_cold, k_cold)
+                    hx.cold_fluid.h_fg = h_fg
+                    res_custom = hx.solve_evaporator(m_hot, m_cold, T_hot_in=T_hot_in, T_sat=T_cold_in, h_fg=h_fg)
+                crosscheck_results = [res_custom]
+                res_custom_lmtd = res_ht = res_lmtd = {}
+            else:
+                # Faz E1: ortalama sıcaklıkta özellik iyileştirmesi (kapsüllendi)
+                holder = {"geo_res": geo_res}
 
-                m_hot = to_kg_s(m_hot_raw, u_m_hot, hot_fluid_obj.density)
-                m_cold = to_kg_s(m_cold_raw, u_m_cold, cold_fluid_obj.density)
-                hx = FinTubeHeatExchanger(
-                    hot_fluid_obj,  # type: ignore[arg-type]
-                    cold_fluid_obj,  # type: ignore[arg-type]
-                    U=1.0,
-                    A=1.0,
-                    flow_type=FLOW_MAP[flow_type],
-                    exchanger_type=exch_type_internal,
+                def _rebuild(T_hot_mid, T_cold_mid, _m_hot, _m_cold):
+                    hot_data_mid = materialize_fluid_data(get_fluid_data(hot_fluid_sel), T_hot_mid)
+                    cold_data_mid = materialize_fluid_data(get_fluid_data(cold_fluid_sel), T_cold_mid)
+                    if hot_data_mid.get("is_iapws"):
+                        _hf = Fluid(name=hot_data_mid["name"], is_iapws=True, calc_temp_c=T_hot_mid)
+                    elif hot_data_mid["is_coolprop"]:
+                        _hf = Fluid(name=hot_data_mid["name"], is_coolprop=True, calc_temp_c=T_hot_mid)
+                    else:
+                        _hf = build_manual_fluid(hot_data_mid, cp_hot, density_hot, mu_hot, k_hot)
+                    if cold_data_mid.get("is_iapws"):
+                        _cf = Fluid(name=cold_data_mid["name"], is_iapws=True, calc_temp_c=T_cold_mid)
+                    elif cold_data_mid["is_coolprop"]:
+                        _cf = Fluid(name=cold_data_mid["name"], is_coolprop=True, calc_temp_c=T_cold_mid)
+                    else:
+                        _cf = build_manual_fluid(cold_data_mid, cp_cold, density_cold, mu_cold, k_cold)
+                    _m_hot = to_kg_s(m_hot_raw, u_m_hot, _hf.density)
+                    _m_cold = to_kg_s(m_cold_raw, u_m_cold, _cf.density)
+                    _hx = FinTubeHeatExchanger(
+                        _hf, _cf, U=1.0, A=1.0,
+                        flow_type=FLOW_MAP[flow_type],
+                        exchanger_type=exch_type_internal,
+                    )
+                    _hx.pump_efficiency = float(pump_eff)
+                    _hx.fan_efficiency = float(fan_eff)
+                    if u_calc_mode == U_MODE_OPTIONS[1]:
+                        holder["geo_res"] = _hx.calculate_geometric_U(geom_dict, _m_hot, _m_cold, hot_is_tube)
+                        _hx.U = holder["geo_res"]["U"]
+                        _hx.A = holder["geo_res"]["A_total"]
+                    else:
+                        _hx.U = U_value
+                        _hx.A = Area
+                    return _m_hot, _m_cold, _hx
+
+                m_hot, m_cold, hx, crosscheck_results = hx.solve_with_refinement(
+                    m_hot, m_cold, T_hot_in, T_cold_in, _rebuild
                 )
-                if u_calc_mode == U_MODE_OPTIONS[1]:
-                    geo_res = hx.calculate_geometric_U(geom_dict, m_hot, m_cold, hot_is_tube)
-                    U_value = geo_res["U"]
-                    Area = geo_res["A_total"]
-                else:
-                    hx.U = U_value
-                    hx.A = Area
-                res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in)
-                crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
+                res_custom, res_custom_lmtd, res_ht, res_lmtd = crosscheck_results
+                geo_res = holder["geo_res"]
+                U_value = hx.U
+                Area = hx.A
 
             pychemengg_warning = None
             try:
@@ -1027,12 +1061,13 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             st.stop()
 
         res_main = res_custom
-        if solver_method == SOLVER_OPTIONS[1]:
-            res_main = res_custom_lmtd
-        elif solver_method == SOLVER_OPTIONS[2]:
-            res_main = res_ht
-        elif solver_method == SOLVER_OPTIONS[3]:
-            res_main = res_lmtd
+        if not (is_condenser or is_evaporator):
+            if solver_method == SOLVER_OPTIONS[1]:
+                res_main = res_custom_lmtd
+            elif solver_method == SOLVER_OPTIONS[2]:
+                res_main = res_ht
+            elif solver_method == SOLVER_OPTIONS[3]:
+                res_main = res_lmtd
 
         has_actual = T_hot_out_opt > -900.0 and T_cold_out_opt > -900.0
         res_actual = None

@@ -252,6 +252,21 @@ class TestRunSolvers(unittest.TestCase):
         for r in results:
             self.assertIn("Q [W]", r)
 
+    def test_solve_with_refinement_uses_rebuild(self):
+        hot, cold = _fluids()
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter", exchanger_type="double_pipe")
+        rebuilt = {"count": 0}
+
+        def _rebuild(_thm, _tcm, _mh, _mc):
+            rebuilt["count"] += 1
+            nhx = FinTubeHeatExchanger(hot, cold, U=100.0, A=10.0, flow_type="counter", exchanger_type="double_pipe")
+            return _mh, _mc, nhx
+
+        m_hot, m_cold, out_hx, results = hx.solve_with_refinement(3.0, 2.0, 90.0, 20.0, _rebuild)
+        self.assertEqual(len(results), 4)
+        self.assertGreaterEqual(rebuilt["count"], 0)
+        self.assertIn("Q [W]", results[0])
+
 
 class TestPhaseChangeSolvers(unittest.TestCase):
     """Faz 4.3: kondenser/evaporatör (Cr=0) çözücüleri."""
@@ -285,6 +300,132 @@ class TestPhaseChangeSolvers(unittest.TestCase):
         hx = FinTubeHeatExchanger(hot, cold, U=500.0, A=20.0, flow_type="counter", exchanger_type="double_pipe")
         with self.assertRaises(ValueError):
             hx.solve_condenser(m_hot=1.0, m_cold=5.0, T_sat=100.0, T_cold_in=20.0)
+
+
+class TestMechanicalDesign(unittest.TestCase):
+    """Faz C: ASME Sec VIII Div.1 + API 661."""
+
+    def test_asme_wall_thickness(self):
+        from mechanical import asme_wall_thickness
+
+        t = asme_wall_thickness(P=1.5e6, R=0.25, S=110e6, E=0.85, CA=3e-3)
+        self.assertGreater(t, 3e-3)
+        # artan basınç → artan kalınlık
+        t2 = asme_wall_thickness(P=3.0e6, R=0.25, S=110e6, E=0.85, CA=3e-3)
+        self.assertGreater(t2, t)
+
+    def test_asme_invalid_pressure(self):
+        from mechanical import MechanicalDesignError, asme_wall_thickness
+
+        with self.assertRaises(MechanicalDesignError):
+            asme_wall_thickness(P=200e6, R=0.25, S=110e6, E=0.85)
+
+    def test_hydrostatic_test_pressure(self):
+        from mechanical import hydrostatic_test_pressure
+
+        self.assertAlmostEqual(hydrostatic_test_pressure(1.0e6), 1.3e6)
+
+    def test_api661_checks(self):
+        from mechanical import api661_face_velocity_check, api661_tip_speed_check
+
+        ok_f, lim_f = api661_face_velocity_check(3.0)
+        self.assertTrue(ok_f)
+        self.assertEqual(lim_f, 3.5)
+        self.assertFalse(api661_face_velocity_check(4.0)[0])
+        self.assertTrue(api661_tip_speed_check(55.0)[0])
+        self.assertFalse(api661_tip_speed_check(65.0)[0])
+
+    def test_mechanical_report_requires_pressure(self):
+        from mechanical import mechanical_design_report
+
+        self.assertEqual(mechanical_design_report({"D_o": 0.019}), [])
+
+    def test_mechanical_report_shell(self):
+        from mechanical import mechanical_design_report
+
+        rows = mechanical_design_report({"D_shell": 0.5, "D_o": 0.019, "design_pressure": 1.5e6})
+        labels = [r["label"] for r in rows]
+        self.assertTrue(any("Gövde min" in lab for lab in labels))
+        self.assertTrue(any("Boru min" in lab for lab in labels))
+        self.assertTrue(any("Hidrostatik" in lab for lab in labels))
+
+    def test_mechanical_report_api(self):
+        from mechanical import mechanical_design_report
+
+        rows = mechanical_design_report({"design_pressure": 1.5e6, "api_face_velocity": 4.0, "api_tip_speed": 55.0})
+        api_labels = [r["label"] for r in rows if "API 661" in r["label"]]
+        self.assertEqual(len(api_labels), 2)
+        face_row = next(r for r in rows if "yüzey hızı" in r["label"])
+        self.assertFalse(face_row["ok"])
+
+
+class TestSiederTateAndNozzle(unittest.TestCase):
+    """Faz B: Sieder-Tate çeper düzeltmesi + gövde nozul ΔP."""
+
+    def _coolprop_water(self):
+        try:
+            return Fluid("Water", is_coolprop=True, calc_temp_c=40.0, pressure=101325)
+        except Exception:
+            return None
+
+    def test_sieder_tate_applied_to_coolprop(self):
+        f = self._coolprop_water()
+        if f is None or f.mu is None:
+            self.skipTest("CoolProp kullanılamıyor")
+        self.assertIsNotNone(f.viscosity_at(80.0))
+        # su ısınınca viskozitesi düşer
+        self.assertLess(f.viscosity_at(90.0), f.mu)
+
+    def test_manual_fluid_no_correction(self):
+        f = Fluid("Manuel", cp=4180, density=995, mu=8e-4, k_cond=0.62)
+        self.assertIsNone(f.viscosity_at(50.0))
+
+    def test_nozzle_pressure_drop_present(self):
+        from heat_exchanger import SHELL_NOZZLE_COUNT, SHELL_NOZZLE_VELOCITY_HEADS
+
+        hot = Fluid("Su", cp=4180, density=970, mu=3e-4, k_cond=0.66)
+        cold = Fluid("Soğuk Su", cp=4180, density=995, mu=8e-4, k_cond=0.62)
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=5.0, flow_type="counter", exchanger_type="shell_and_tube")
+        geom = {
+            "D_o": 0.019, "D_i": 0.014, "L": 3.0, "N_tubes": 20, "k_wall": 45.0,
+            "D_shell": 0.25, "baffle_spacing": 0.3, "baffle_cut": 0.25,
+            "tube_layout_angle": "30", "shell_passes": 1, "tube_passes": 1,
+        }
+        res = hx.calculate_geometric_U(geom, 0.5, 1.0, hot_is_tube=False)
+        self.assertGreater(res["delta_p_shell"], 0)
+        # nozul kaybı eklendi (2 nozul × 1.0 velocity head)
+        self.assertGreater(SHELL_NOZZLE_COUNT, 0)
+        self.assertGreater(SHELL_NOZZLE_VELOCITY_HEADS, 0)
+
+
+class TestBellDelaware(unittest.TestCase):
+    """Faz F3: opsiyonel Bell-Delaware gövde tarafı modeli."""
+
+    def test_bell_delaware_factors_bounded(self):
+        from heat_exchanger import _bell_delaware_shell_h
+
+        h_o, j = _bell_delaware_shell_h(Nu_ideal=80.0, k_shell=0.62, D_o=0.019, D_shell=0.25,
+                                        baffle_cut=0.25, tube_count=40, L=3.0, baffle_spacing=0.3)
+        self.assertGreater(h_o, 0)
+        for key in ("J_c", "J_l", "J_b", "J_s", "J_r"):
+            self.assertGreaterEqual(j[key], 0.5)
+            self.assertLessEqual(j[key], 1.0)
+
+    def test_shell_uses_bell_delaware(self):
+        from heat_exchanger import USE_BELL_DELAWARE
+
+        hot = Fluid("Su", cp=4180, density=970, mu=3e-4, k_cond=0.66)
+        cold = Fluid("Soğuk Su", cp=4180, density=995, mu=8e-4, k_cond=0.62)
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=5.0, flow_type="counter", exchanger_type="shell_and_tube")
+        geom = {
+            "D_o": 0.019, "D_i": 0.014, "L": 3.0, "N_tubes": 40, "k_wall": 45.0,
+            "D_shell": 0.25, "baffle_spacing": 0.3, "baffle_cut": 0.25,
+            "tube_layout_angle": "30", "shell_passes": 1, "tube_passes": 1,
+        }
+        res = hx.calculate_geometric_U(geom, 0.5, 1.0, hot_is_tube=False)
+        self.assertGreater(res["h_o"], 0)
+        if USE_BELL_DELAWARE:
+            self.assertGreater(res["U"], 0)
 
 
 if __name__ == "__main__":

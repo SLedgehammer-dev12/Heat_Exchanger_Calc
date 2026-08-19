@@ -44,6 +44,7 @@ from engineering_utils import (
 from exceptions import InvalidGeometryError, InvalidInputError
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
+from i18n import _, set_language
 from logging_config import setup_logging
 from reporting import build_calculation_report, build_calculation_report_pdf
 from standards import fouling_preset_options, tube_preset_options
@@ -206,6 +207,8 @@ def compute_desktop_calculation(snapshot):
         flow_type=snapshot["flow_type"],
         exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
     )
+    hx.pump_efficiency = snapshot.get("pump_efficiency", 0.70)
+    hx.fan_efficiency = snapshot.get("fan_efficiency", 0.60)
 
     geo_res = None
     geom = {}
@@ -222,59 +225,58 @@ def compute_desktop_calculation(snapshot):
         hx.U = snapshot["U"]
         hx.A = snapshot["A"]
 
-    res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot, T_cold)
-    crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
-
-    # Iterative property refinement at midpoint temperatures (2 additional passes)
-    for _iter in range(2):
-        t_ho = res_custom["T_hot_out [C]"]
-        t_co = res_custom["T_cold_out [C]"]
-        T_hot_mid = (T_hot + t_ho) / 2.0
-        T_cold_mid = (T_cold + t_co) / 2.0
-        if abs(T_hot_mid - T_hot) < 1.0 and abs(T_cold_mid - T_cold) < 1.0:
-            break
-
-        hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot_mid)
-        cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold_mid)
-        hot_fluid = build_fluid_from_selection(
-            snapshot["hot_selection"],
-            hot_data,
-            snapshot["hot_mixture_data"],
-            snapshot["hot_mixture_basis"],
-            T_hot_mid,
-            snapshot["mu_hot"],
-            snapshot["k_hot"],
-        )
-        cold_fluid = build_fluid_from_selection(
-            snapshot["cold_selection"],
-            cold_data,
-            snapshot["cold_mixture_data"],
-            snapshot["cold_mixture_basis"],
-            T_cold_mid,
-            snapshot["mu_cold"],
-            snapshot["k_cold"],
-        )
-        m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
-        m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
-        hx = FinTubeHeatExchanger(
-            hot_fluid,
-            cold_fluid,
-            U=1.0,
-            A=1.0,
-            flow_type=snapshot["flow_type"],
-            exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
-        )
-        if geo_res is not None:
-            geo_res = hx.calculate_geometric_U(geom, m_hot, m_cold, snapshot["hot_is_tube"])
-            hx.U = geo_res["U"]
-            hx.A = geo_res["A_total"]
+    # Faz D1: İki-fazlı (Kondenser / Evaporatör) modu — Cr=0, h_fg bazlı
+    is_condenser = "Kondenser" in snapshot["purpose"]
+    is_evaporator = "Evaporatör" in snapshot["purpose"]
+    if is_condenser or is_evaporator:
+        h_fg = snapshot.get("h_fg") or 0.0
+        if h_fg <= 0:
+            raise InvalidInputError("İki-fazlı hesap için gizli ısı (h_fg) girilmelidir.")
+        if is_condenser:
+            hx.hot_fluid.h_fg = h_fg
+            res_main_2p = hx.solve_condenser(m_hot, m_cold, T_sat=T_hot, T_cold_in=T_cold, h_fg=h_fg)
         else:
-            hx.U = snapshot["U"]
-            hx.A = snapshot["A"]
-        res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot, T_cold)
-        crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
-        logger.debug("Midpoint iteration %d: Tho=%.1f Tco=%.1f", _iter + 1, t_ho, t_co)
-    # End of iterative property refinement
+            hx.cold_fluid.h_fg = h_fg
+            res_main_2p = hx.solve_evaporator(m_hot, m_cold, T_hot_in=T_hot, T_sat=T_cold, h_fg=h_fg)
+        crosscheck_results = [res_main_2p]
+        res_custom, res_custom_lmtd, res_ht, res_lmtd = res_main_2p, {}, {}, {}
+    else:
+        # Faz E1: ortalama sıcaklıkta özellik iyileştirmesi (kod tekrarı kapsüllendi)
+        holder = {"geo_res": geo_res}
+
+        def _rebuild(T_hot_mid, T_cold_mid, _m_hot, _m_cold):
+            hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot_mid)
+            cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold_mid)
+            hot_fluid = build_fluid_from_selection(
+                snapshot["hot_selection"], hot_data, snapshot["hot_mixture_data"],
+                snapshot["hot_mixture_basis"], T_hot_mid, snapshot["mu_hot"], snapshot["k_hot"],
+            )
+            cold_fluid = build_fluid_from_selection(
+                snapshot["cold_selection"], cold_data, snapshot["cold_mixture_data"],
+                snapshot["cold_mixture_basis"], T_cold_mid, snapshot["mu_cold"], snapshot["k_cold"],
+            )
+            _m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
+            _m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
+            _hx = FinTubeHeatExchanger(
+                hot_fluid, cold_fluid, U=1.0, A=1.0,
+                flow_type=snapshot["flow_type"],
+                exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
+            )
+            _hx.pump_efficiency = snapshot.get("pump_efficiency", 0.70)
+            _hx.fan_efficiency = snapshot.get("fan_efficiency", 0.60)
+            if holder["geo_res"] is not None:
+                holder["geo_res"] = _hx.calculate_geometric_U(geom, _m_hot, _m_cold, snapshot["hot_is_tube"])
+                _hx.U = holder["geo_res"]["U"]
+                _hx.A = holder["geo_res"]["A_total"]
+            else:
+                _hx.U = snapshot["U"]
+                _hx.A = snapshot["A"]
+            return _m_hot, _m_cold, _hx
+
+        m_hot, m_cold, hx, crosscheck_results = hx.solve_with_refinement(m_hot, m_cold, T_hot, T_cold, _rebuild)
+        res_custom, res_custom_lmtd, res_ht, res_lmtd = crosscheck_results
+        geo_res = holder["geo_res"]
+
 
     pychemengg_warning = None
     try:
@@ -286,7 +288,9 @@ def compute_desktop_calculation(snapshot):
 
     method = snapshot["method"]
     res_main = res_custom
-    if method == "Kendi Algoritmamız (LMTD)":
+    if is_condenser or is_evaporator:
+        res_main = res_main_2p
+    elif method == "Kendi Algoritmamız (LMTD)":
         res_main = res_custom_lmtd
     elif method == "HT Kütüphanesi (Epsilon-NTU)":
         res_main = res_ht
@@ -531,7 +535,7 @@ def normalize_loaded_data(data):
 class HeatExchangerDesktopApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} Desktop v{VERSION}")
+        self.setWindowTitle(_("ISI DEGISTIRICI DETAYLI HESAP ARACI"))
         self.resize(1100, 800)
         self.all_logs = []
         self.latest_update_info = None
@@ -612,19 +616,53 @@ class HeatExchangerDesktopApp(QMainWindow):
 
         self.combo_purpose = QComboBox()
         self.combo_purpose.addItems(
-            ["Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)", "Performans Değerlendirmesi (Verim Bul)"]
+            [
+                "Sistem Tasarımı (Çıkış Sıcaklıklarını Bul)",
+                "Performans Değerlendirmesi (Verim Bul)",
+                "Yoğuşturucu (Kondenser)",
+                "Buharlaştırıcı (Evaporatör)",
+            ]
         )
         self.combo_purpose.currentTextChanged.connect(self.toggle_purpose)
+
+        self.spin_h_fg = QDoubleSpinBox()
+        self.spin_h_fg.setRange(0.0, 10_000_000.0)
+        self.spin_h_fg.setDecimals(0)
+        self.spin_h_fg.setValue(2_200_000)
+        self.spin_h_fg.setSingleStep(50_000)
+        self.spin_h_fg.setSuffix(" J/kg")
+
+        self.spin_pump_eff = QDoubleSpinBox()
+        self.spin_pump_eff.setRange(0.05, 1.0)
+        self.spin_pump_eff.setDecimals(2)
+        self.spin_pump_eff.setValue(0.70)
+        self.spin_pump_eff.setSingleStep(0.01)
+        self.spin_pump_eff.setToolTip("Sıvı tarafı hidrolik pompa verimi")
+
+        self.spin_fan_eff = QDoubleSpinBox()
+        self.spin_fan_eff.setRange(0.05, 1.0)
+        self.spin_fan_eff.setDecimals(2)
+        self.spin_fan_eff.setValue(0.60)
+        self.spin_fan_eff.setSingleStep(0.01)
+        self.spin_fan_eff.setToolTip("Gaz tarafı fan verimi")
 
         self.combo_u_mode = QComboBox()
         self.combo_u_mode.addItems(["Basit Mod (Manuel U Değeri)", "Geometrik Mod (Malzeme ile Hesapla)"])
         self.combo_u_mode.currentTextChanged.connect(self.toggle_u_mode)
+
+        self.combo_language = QComboBox()
+        self.combo_language.addItems(["Türkçe (TR)", "English (EN)"])
+        self.combo_language.currentTextChanged.connect(self.on_language_changed)
 
         self.combo_exchanger = QComboBox()
         self.combo_exchanger.addItems(list(EXCHANGER_LABEL_TO_INTERNAL.keys()))
         self.combo_exchanger.currentIndexChanged.connect(self.on_exchanger_changed)
 
         form_config.addRow("Hesap Amacı:", self.combo_purpose)
+        form_config.addRow("Gizli Isı (h_fg):", self.spin_h_fg)
+        form_config.addRow("Pompa Verimi:", self.spin_pump_eff)
+        form_config.addRow("Fan Verimi:", self.spin_fan_eff)
+        form_config.addRow("Dil:", self.combo_language)
         form_config.addRow("Eşanjör Tipi:", self.combo_exchanger)
         form_config.addRow("Akış Tipi:", self.combo_flow)
         form_config.addRow("Ana Çözücü Alg.:", self.combo_method)
@@ -1247,6 +1285,10 @@ class HeatExchangerDesktopApp(QMainWindow):
         else:
             self.stack_geom.setCurrentIndex(0)
 
+    def on_language_changed(self, text):
+        set_language("en" if "EN" in text else "tr")
+        self.setWindowTitle(_("ISI DEGISTIRICI DETAYLI HESAP ARACI"))
+
     def on_exchanger_changed(self):
         exch_internal = EXCHANGER_LABEL_TO_INTERNAL.get(self.combo_exchanger.currentText(), "finned_tube")
         allowed = EXCHANGER_ALLOWED_FLOWS.get(exch_internal, {"cross_unmixed"})
@@ -1454,6 +1496,9 @@ class HeatExchangerDesktopApp(QMainWindow):
         exchanger_type = EXCHANGER_LABEL_TO_INTERNAL.get(self.combo_exchanger.currentText(), "finned_tube")
         return {
             "purpose": self.combo_purpose.currentText(),
+            "h_fg": self.spin_h_fg.value(),
+            "pump_efficiency": self.spin_pump_eff.value(),
+            "fan_efficiency": self.spin_fan_eff.value(),
             "flow_label": flow_label,
             "flow_type": flow_type,
             "exchanger_type": exchanger_type,

@@ -11,7 +11,7 @@ hiddenimports = [
     'app_web', 'fluids_db', 'heat_exchanger', 'reporting', 'updater',
     'version', 'logging_config', 'engineering_utils',
     'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
-    'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards',
+    'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
 ]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')

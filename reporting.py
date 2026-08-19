@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from i18n import _
+from mechanical import mechanical_design_report
 
 
 def _fmt(value, digits=4):
@@ -281,6 +282,12 @@ def build_calculation_report(context):
             "- Termal yağ verileri quadratic cp(T) korelasyon modeli ile hesaplanır; üretici datasheet değerleri ile doğrulanmalıdır.",
         ]
     )
+
+    mech_rows = mechanical_design_report(geometry)
+    if mech_rows:
+        _section(lines, "10b. Mekanik Tasarim (ASME / API 661)")
+        for row in mech_rows:
+            lines.append(f"- {row['label']}: {row['value']}  [{row['status']}]")
 
     _section(lines, "11. Cozum Akisi")
     lines.extend(
@@ -661,6 +668,14 @@ def build_calculation_report_pdf(context):
     else:
         story.append(p("Kritik uyarı yok."))
     story.append(Spacer(1, 3 * mm))
+
+    # --- 10b. Mekanik Tasarım (ASME / API 661) ---
+    mech_rows = mechanical_design_report(geometry)
+    if mech_rows:
+        story.append(Paragraph("10b. Mekanik Tasarım (ASME / API 661)", h2))
+        for row in mech_rows:
+            story.append(p(f"• <font color='#888888'>{row['label']}:</font> <b>{row['value']}</b> [{row['status']}]"))
+        story.append(Spacer(1, 3 * mm))
 
     # --- 11. Akış Şeması ve Sıcaklık Profili (Faz 3.1) ---
     images = context.get("images") or []
