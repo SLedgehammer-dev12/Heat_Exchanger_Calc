@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from i18n import _
+
 
 def _fmt(value, digits=4):
     if value is None:
@@ -13,7 +15,7 @@ def _fmt(value, digits=4):
 
 
 def _section(lines, title):
-    lines.extend(["", title, "-" * len(title)])
+    lines.extend(["", _(title), "-" * len(title)])
 
 
 def _add_mapping(lines, data, skip_empty=False):
@@ -39,6 +41,14 @@ GEOMETRY_LABELS = {
     "fin_type": "Kanatçık tipi",
     "R_f_i": "Fouling iç direnci [m2.K/W]",
     "R_f_o": "Fouling dış direnci [m2.K/W]",
+    "pitch_parallel": "Longitudinal pitch [m]",
+    "tube_arrangement": "Boru yerleşimi",
+    "baffle_spacing": "Deflektör aralığı [m]",
+    "baffle_cut": "Deflektör kesim oranı",
+    "tube_layout_angle": "Yerleşim açısı [°]",
+    "shell_passes": "Gövde geçiş sayısı",
+    "tube_passes": "Boru geçiş sayısı",
+    "tema_designation": "TEMA İsimlendirme",
 }
 
 
@@ -84,7 +94,7 @@ def build_calculation_report(context):
     selected = results["main"]
 
     lines = [
-        "ISI DEGISTIRICI DETAYLI HESAP RAPORU",
+        _("ISI DEGISTIRICI DETAYLI HESAP RAPORU"),
         "=" * 40,
         f"Rapor tarihi: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "Not: Bu rapor mühendislik ön tasarım/doğrulama amaçlıdır; kritik tasarımlarda üretici verisi ve standart hesap defteri ile doğrulanmalıdır.",
@@ -160,6 +170,8 @@ def build_calculation_report(context):
                     "Kanatçık verimi": _fmt(geo_result.get("eta_fin"), 4),
                     "ΔP boru tarafı": f"{_fmt(geo_result.get('delta_p_tube', 0) / 1000, 4)} kPa",
                     "ΔP gövde/kanat tarafı": f"{_fmt(geo_result.get('delta_p_shell', 0) / 1000, 4)} kPa",
+                    "Pompa gücü (boru)": f"{_fmt(geo_result.get('pump_power_tube', 0), 4)} W",
+                    "Fan/Pompa gücü (gövde/kanat)": f"{_fmt(geo_result.get('pump_power_shell', 0), 4)} W",
                 },
             )
 
@@ -295,6 +307,7 @@ def build_calculation_report_pdf(context):
     from reportlab.lib.units import mm
     from reportlab.platypus import (
         HRFlowable,
+        Image,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -334,7 +347,7 @@ def build_calculation_report_pdf(context):
         return HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc"))
 
     story = []
-    story.append(Paragraph("Isı Değiştirici Hesap Raporu", title_style))
+    story.append(Paragraph(_("Isı Değiştirici Hesap Raporu"), title_style))
     story.append(Paragraph(f"Oluşturulma: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", note))
     story.append(hr())
 
@@ -466,6 +479,7 @@ def build_calculation_report_pdf(context):
                 ("h_o (W/m².K)", geo_result.get("h_o")),
                 ("Re_o", geo_result.get("Re_o")),
                 ("ΔP gövde/kanat (kPa)", geo_result.get("delta_p_shell", 0) / 1000),
+                ("Fan/Pompa gücü (W)", geo_result.get("pump_power_shell", 0)),
             ]
             data_s = [[p(k, cell_bold), p(f"{_fmt(v, 4)}")] for k, v in shell_items]
             story.append(
@@ -480,6 +494,7 @@ def build_calculation_report_pdf(context):
                 ("h_i (W/m².K)", geo_result.get("h_i")),
                 ("Re_i", geo_result.get("Re_i")),
                 ("ΔP boru (kPa)", geo_result.get("delta_p_tube", 0) / 1000),
+                ("Pompa gücü (W)", geo_result.get("pump_power_tube", 0)),
             ]
             data_t = [[p(k, cell_bold), p(f"{_fmt(v, 4)}")] for k, v in tube_items]
             story.append(Paragraph("Boru Tarafı", ParagraphStyle("SubH", parent=body, fontWeight="bold", fontSize=9)))
@@ -520,7 +535,7 @@ def build_calculation_report_pdf(context):
         formula_items += [
             ("Reynolds", "Re = ρ·V·D / μ"),
             ("Prandtl", "Pr = cp·μ / k"),
-            ("İç türbülanslı Nu", "Gnielowski (birincil); Dittus-Boelter (yedek)"),
+            ("İç türbülanslı Nu", "Gnielinski (birincil); Dittus-Boelter (yedek)"),
             ("Laminer Nu", "İç boru: Nu=3.66; çift borulu annulus: Nu_i=3.66+1.2·(r*)⁻⁰·⁸"),
             ("Duvar direnci", "R_wall = ln(D_o/D_i) / (2π·k_wall·L·N)"),
             ("Toplam UA", "1/UA = R_i + R_f,i + R_wall + R_f,o + R_o"),
@@ -646,6 +661,23 @@ def build_calculation_report_pdf(context):
     else:
         story.append(p("Kritik uyarı yok."))
     story.append(Spacer(1, 3 * mm))
+
+    # --- 11. Akış Şeması ve Sıcaklık Profili (Faz 3.1) ---
+    images = context.get("images") or []
+    if images:
+        story.append(Paragraph("11. Akış Şeması ve Sıcaklık Profili", h2))
+        for img in images:
+            buf = img.get("buffer")
+            if buf is None:
+                continue
+            buf.seek(0)
+            width_mm = img.get("width_mm", 170.0)
+            height_mm = img.get("height_mm", 60.0)
+            story.append(Image(buf, width=width_mm * mm, height=height_mm * mm))
+            caption = img.get("caption")
+            if caption:
+                story.append(p(caption, note))
+            story.append(Spacer(1, 2 * mm))
 
     doc.build(story)
     buffer.seek(0)

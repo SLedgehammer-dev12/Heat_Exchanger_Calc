@@ -40,13 +40,27 @@ DEFAULT_N_SEGMENTS = 10
 
 MIN_ALLOWABLE_LMTD_F = 0.5
 
-MIN_ALLOWABLE_LMTD_F = 0.5
-
 GNIELINSKI_PR_RANGE = (0.7, 160)
 
 TUBE_WALL_ROUGHNESS = 1.5e-6
 
 FALLBACK_NU_INTERNAL_LAMINAR = 3.66
+
+# Laminer akışta termal giriş bölgesi etkisi (Hausen/Graetz). True ise
+# Nu = 3.66 + 0.0668*Gz / (1 + 0.04*Gz^(2/3)) kullanılır (kısa boru / yüksek Pr).
+LAMINAR_ENTRANCE_MODEL = True
+
+# Pompa / fan verimlilikleri (hidrolik güç tahmini için)
+PUMP_EFFICIENCY = 0.70
+FAN_EFFICIENCY = 0.60
+
+# Çok geçişli boru demetlerinde dönüş kafaları + nozul lokal kayıpları
+# (velocity head cinsinden, geçiş başına yaklaşık TEMA/uygulama kabulü).
+LOCAL_LOSS_VELOCITY_HEADS_PER_PASS = 4.0
+
+# TEMA akış kaynaklı titreşim ön değerlendirmesi
+TEMA_RHO_V2_LIMIT = 1500.0  # kg/(m·s^2) — aşımında impingement plate öner
+MAX_UNSUPPORTED_SPAN_FACTOR = 60.0  # baffle_spacing / D_o üst sınır (ön tarama)
 
 
 BRIGGS_YOUNG_RE_RANGE = (1100, 18000)
@@ -64,6 +78,17 @@ TUBE_MATERIALS = {
 FIN_MATERIALS = {
     "Alüminyum (k=237)": 237.0,
     "Karbon Çelik (k=45)": 45.0,
+}
+
+# TEMA eşanjör isimlendirmeleri (ön başlık - gövde - arka başlık)
+TEMA_DESIGNATIONS = {
+    "BEM": "Bonnet (B) - Tek geçişli gövde (E) - Sabit tüp sacı (M)",
+    "AEL": "Kanallı çıkarılabilir kapak (A) - Tek geçişli gövde (E) - Sabit tüp sacı (L)",
+    "AEM": "Kanallı çıkarılabilir kapak (A) - Tek geçişli gövde (E) - Sabit tüp sacı (M)",
+    "BES": "Bonnet (B) - Tek geçişli gövde (E) - Yüzer başlık (S)",
+    "AES": "Kanallı çıkarılabilir kapak (A) - Tek geçişli gövde (E) - Yüzer başlık (S)",
+    "CFU": "Kanallı (C) - İki geçişli gövde (F) - U-tüp (U)",
+    "AKU": "Kanallı (A) - Kettle reboiler (K) - U-tüp (U)",
 }
 
 GAS_MOLECULAR_WEIGHTS = {

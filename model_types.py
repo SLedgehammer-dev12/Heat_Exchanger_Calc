@@ -40,6 +40,7 @@ class GeometryInput:
     baffle_cut: float = 0.25  # baffle cut fraction (0.15–0.45)
     tube_layout_angle: str = "30"  # "30" | "45" | "60" | "90" degrees
     shell_passes: int = 1
+    tube_passes: int = 2  # Bowman F-faktörü N (1-N TEMA: boru geçiş sayısı)
 
     # Fouling
     R_f_i: float = 0.0  # inside fouling [m²·K/W]
@@ -62,6 +63,8 @@ class GeometryInput:
             raise InvalidInputError(f"Desteklenmeyen eşanjör tipi: {self.exchanger_type}")
         if self.baffle_cut < 0.0 or self.baffle_cut > 0.5:
             raise InvalidGeometryError("Baffle cut oranı 0.0–0.5 arasında olmalıdır.")
+        if self.tube_passes < 1:
+            raise InvalidGeometryError("Boru geçiş sayısı (tube_passes) en az 1 olmalıdır.")
 
     def __post_init__(self):
         if self.pitch_parallel <= 0 and self.pitch > 0:
@@ -94,6 +97,7 @@ class GeometryInput:
             baffle_cut=d.get("baffle_cut", 0.25),
             tube_layout_angle=d.get("tube_layout_angle", "30"),
             shell_passes=int(d.get("shell_passes", 1)),
+            tube_passes=int(d.get("tube_passes", 2)),
             R_f_i=d.get("R_f_i", 0.0),
             R_f_o=d.get("R_f_o", 0.0),
         )
@@ -120,6 +124,7 @@ class GeometryInput:
             "baffle_cut": self.baffle_cut,
             "tube_layout_angle": self.tube_layout_angle,
             "shell_passes": self.shell_passes,
+            "tube_passes": self.tube_passes,
             "R_f_i": self.R_f_i,
             "R_f_o": self.R_f_o,
         }
@@ -143,7 +148,6 @@ class CalcResult:
     warnings: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        "Method" if self.method.startswith("Epsilon") else "Method"
         return {
             "Method": self.method,
             "Source": self.source,

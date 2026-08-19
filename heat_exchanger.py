@@ -67,8 +67,14 @@ from config import (
     EXCHANGER_TYPE_FINNED,
     EXCHANGER_TYPE_SHELL,
     EXCHANGER_TYPES,
+    FAN_EFFICIENCY,
     GNIELINSKI_PR_RANGE,
+    LAMINAR_ENTRANCE_MODEL,
+    LOCAL_LOSS_VELOCITY_HEADS_PER_PASS,
+    MAX_UNSUPPORTED_SPAN_FACTOR,
+    PUMP_EFFICIENCY,
     SUPPORTED_FLOW_TYPES,
+    TEMA_RHO_V2_LIMIT,
     TUBE_WALL_ROUGHNESS,
 )
 
@@ -143,13 +149,32 @@ def _properties_from_iapws(calc_temp_c: float, pressure: float) -> tuple[float, 
 
 
 def _fin_efficiency(
-    fin_type: str, h_o: float, k_fin: float, fin_thickness: float, fin_height: float, D_o: float
+    fin_type: str,
+    h_o: float,
+    k_fin: float,
+    fin_thickness: float,
+    fin_height: float,
+    D_o: float,
+    pitch: float | None = None,
+    pitch_parallel: float | None = None,
 ) -> float:
-    """Fin efficiency for annular or rectangular fins.
+    """Fin efficiency for annular, rectangular or continuous plate fins.
 
     Annular: Kern-Kraus (ht) -> Bessel-fallback via scipy.
     Rectangular:  tanh(m*L)/(m*L) formula.
+    Plate (Schmidt 1949): equivalent annular radius for continuous plate fin on
+        round tube, then the same annular efficiency treatment.
     """
+    if fin_type == "plate" and pitch is not None and pitch_parallel is not None:
+        r_o = D_o / 2.0
+        x_m = pitch / 2.0
+        x_l = pitch_parallel / 2.0
+        beta = x_l / x_m
+        if x_m > 0 and beta > 0.2:
+            psi = x_m / r_o
+            r_eq = 1.28 * psi * np.sqrt(beta - 0.2) * r_o
+            fin_height = max(r_eq - r_o, 1e-9)
+            fin_type = "annular"
     if fin_type == "annular":
         try:
             return ht.fin_efficiency_Kern_Kraus(
@@ -197,6 +222,7 @@ class Fluid:
         is_iapws: bool = False,
         calc_temp_c: float | None = None,
         pressure: float = 101325,
+        h_fg: float | None = None,
     ):
         self.name = name
         self.is_coolprop = is_coolprop
@@ -207,6 +233,7 @@ class Fluid:
         self.t_crit = None
         self.t_sat_at_p = None
         self.single_phase = True
+        self.h_fg = h_fg  # gizli (latent) ısı [J/kg] — iki-faz çözücü için
 
         if is_iapws:
             if calc_temp_c is None:
@@ -307,6 +334,9 @@ class FinTubeHeatExchanger:
         if exchanger_type not in SUPPORTED_EXCHANGER_TYPES:
             raise InvalidExchangerTypeError(f"Desteklenmeyen eşanjör tipi: {exchanger_type}")
         self.exchanger_type = exchanger_type
+        self.shell_passes: int = 1
+        self.tube_passes: int = 2
+        self.baffle_cut: float = 0.25
         allowed_flows = EXCHANGER_ALLOWED_FLOWS.get(exchanger_type)
         if allowed_flows and flow_type not in allowed_flows:
             raise InvalidFlowTypeError(
@@ -329,7 +359,19 @@ class FinTubeHeatExchanger:
         if E == "unity":
             return 1.0
         elif E == "bowman":
-            return _bowman_lmtd_factor(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c, warnings=warnings)
+            # Bowman F: N = boru geçiş sayısı (tube passes). Tek geçiş saf counterflow => F=1.
+            if self.tube_passes <= 1:
+                return 1.0
+            return _bowman_lmtd_factor(
+                T_hot_in,
+                T_cold_in,
+                T_hot_out,
+                T_cold_out,
+                C_h,
+                C_c,
+                N_shell_passes=self.tube_passes,
+                warnings=warnings,
+            )
         elif E == "crossflow":
             return self._calc_crossflow_F(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c, warnings)
         return 1.0
@@ -370,9 +412,16 @@ class FinTubeHeatExchanger:
             except (ValueError, RuntimeError):
                 NTU_actual = -np.log(1.0 - epsilon) / Cr if Cr > 0 else -np.log(1.0 - epsilon)
         elif self.flow_type == "cross_mixed_unmixed":
+            # solve_ntu ile tutarlı: C_h >= C_c ise Cmax karışmış, aksi halde Cmin karışmış.
+            if C_h >= C_c:
 
-            def _f_eps_mix(ntu):
-                return (1.0 / Cr) * (1.0 - np.exp(-Cr * (1.0 - np.exp(-ntu)))) - epsilon
+                def _f_eps_mix(ntu):
+                    return (1.0 / Cr) * (1.0 - np.exp(-Cr * (1.0 - np.exp(-ntu)))) - epsilon
+
+            else:
+
+                def _f_eps_mix(ntu):
+                    return 1.0 - np.exp(-(1.0 / Cr) * (1.0 - np.exp(-Cr * ntu))) - epsilon
 
             try:
                 NTU_actual = opt.brentq(_f_eps_mix, 1e-6, 20.0)
@@ -708,6 +757,65 @@ class FinTubeHeatExchanger:
             result.setdefault("warnings", []).append(f"Custom LMTD çözücü yakınsamadı; NTU sonucuna düşüldü: {exc}")
             return result
 
+    def solve_condenser(self, m_hot: float, m_cold: float, T_sat: float, T_cold_in: float, h_fg: float | None = None):
+        """Yoğuşturucu (kondenser): sıcak akışkan T_sat'de yoğuşur (C_h → ∞, Cr=0).
+
+        ε = 1 - exp(-NTU), NTU = U·A / C_cold. Gizli ısı kapasitesi ile sınırlanır.
+        """
+        h_fg = h_fg or self.hot_fluid.h_fg
+        if h_fg is None or h_fg <= 0:
+            raise InvalidInputError("Kondenser çözümü için gizli ısı (h_fg) gereklidir.")
+        C_cold = _require_positive("Soğuk akışkan cp", self.cold_fluid.cp) * m_cold
+        Q_max = m_hot * h_fg
+        NTU = (self.U * self.A) / C_cold
+        epsilon = 1.0 - np.exp(-NTU)
+        Q = epsilon * C_cold * (T_sat - T_cold_in)
+        Q = min(Q, Q_max)
+        T_cold_out = T_cold_in + Q / C_cold
+        return {
+            "Method": "Kondenser (Cr=0)",
+            "Source": "custom",
+            "Q [W]": Q,
+            "epsilon": epsilon,
+            "T_hot_in [C]": T_sat,
+            "T_cold_in [C]": T_cold_in,
+            "T_hot_out [C]": T_sat,
+            "T_cold_out [C]": T_cold_out,
+            "NTU": NTU,
+            "C_r": 0.0,
+            "Q_max [W]": Q_max,
+            "status": "warning" if Q_max <= Q else "ok",
+            "warnings": (["Gizli ısı kapasitesi sınırına ulaşıldı; tam yoğuşma olmayabilir."] if Q_max <= Q else []),
+        }
+
+    def solve_evaporator(self, m_hot: float, m_cold: float, T_hot_in: float, T_sat: float, h_fg: float | None = None):
+        """Buharlaştırıcı (evaporatör): soğuk akışkan T_sat'de buharlaşır (C_c → ∞, Cr=0)."""
+        h_fg = h_fg or self.cold_fluid.h_fg
+        if h_fg is None or h_fg <= 0:
+            raise InvalidInputError("Evaporatör çözümü için gizli ısı (h_fg) gereklidir.")
+        C_hot = _require_positive("Sıcak akışkan cp", self.hot_fluid.cp) * m_hot
+        Q_max = m_cold * h_fg
+        NTU = (self.U * self.A) / C_hot
+        epsilon = 1.0 - np.exp(-NTU)
+        Q = epsilon * C_hot * (T_hot_in - T_sat)
+        Q = min(Q, Q_max)
+        T_hot_out = T_hot_in - Q / C_hot
+        return {
+            "Method": "Evaporatör (Cr=0)",
+            "Source": "custom",
+            "Q [W]": Q,
+            "epsilon": epsilon,
+            "T_hot_in [C]": T_hot_in,
+            "T_cold_in [C]": T_sat,
+            "T_hot_out [C]": T_hot_out,
+            "T_cold_out [C]": T_sat,
+            "NTU": NTU,
+            "C_r": 0.0,
+            "Q_max [W]": Q_max,
+            "status": "warning" if Q_max <= Q else "ok",
+            "warnings": (["Gizli ısı kapasitesi sınırına ulaşıldı; tam buharlaşma olmayabilir."] if Q_max <= Q else []),
+        }
+
     def solve_segmented(self, m_hot: float, m_cold: float, T_hot_in: float, T_cold_in: float, n_segments: int = 10):
         """ε-NTU with segment-averaged midpoint temperatures for cross-check.
 
@@ -829,11 +937,25 @@ class FinTubeHeatExchanger:
         }
 
     def _nusselt_internal(
-        self, Re: float, Pr: float, n_factor: float, laminar_nu: float, side_name: str, warnings: list[str]
+        self,
+        Re: float,
+        Pr: float,
+        n_factor: float,
+        laminar_nu: float,
+        side_name: str,
+        warnings: list[str],
+        gz: float | None = None,
     ) -> float:
         Re = _require_positive(f"{side_name} Reynolds", Re)
         Pr = _require_positive(f"{side_name} Prandtl", Pr)
         if Re <= 2300:
+            if LAMINAR_ENTRANCE_MODEL and gz is not None and gz > 0:
+                nu_lam = laminar_nu + 0.0668 * gz / (1.0 + 0.04 * gz ** (2.0 / 3.0))
+                warnings.append(
+                    f"{side_name}: laminer akista termal giriş bölgesi (Hausen/Graetz) uygulandı: "
+                    f"Gz={gz:.1f}, Nu={nu_lam:.2f}."
+                )
+                return nu_lam
             warnings.append(
                 f"{side_name}: laminer akista Nu={laminar_nu:.2f} sabit sinir kosulu varsayimiyla kullanildi."
             )
@@ -875,6 +997,9 @@ class FinTubeHeatExchanger:
         k_wall = geom["k_wall"]
         R_f_i = float(geom.get("R_f_i", 0.0) or 0.0)
         R_f_o = float(geom.get("R_f_o", 0.0) or 0.0)
+        self.shell_passes = int(geom.get("shell_passes", self.shell_passes) or 1)
+        self.tube_passes = int(geom.get("tube_passes", self.tube_passes) or 2)
+        self.baffle_cut = float(geom.get("baffle_cut", self.baffle_cut) or 0.25)
         warnings: list[str] = []
         if R_f_i < 0 or R_f_o < 0:
             raise InvalidInputError("Fouling dirençleri negatif olamaz.")
@@ -924,7 +1049,8 @@ class FinTubeHeatExchanger:
             Pr_i = (fluid_in.cp * fluid_in.mu) / fluid_in.k_cond
 
         n_factor = 0.3 if hot_is_tube else 0.4
-        Nu_i = self._nusselt_internal(Re_i, Pr_i, n_factor, 3.66, "İç taraf", warnings)
+        gz_i = Re_i * Pr_i * (D_i / L)
+        Nu_i = self._nusselt_internal(Re_i, Pr_i, n_factor, 3.66, "İç taraf", warnings, gz=gz_i)
         h_i = (Nu_i * fluid_in.k_cond) / D_i
 
         # --- DUVAR İLETİM DİRENCİ (R_wall) ---
@@ -971,7 +1097,16 @@ class FinTubeHeatExchanger:
                         * ((s / geom["fin_thickness"]) ** 0.1134)
                     )
                     h_o = (Nu_o * fluid_out.k_cond) / D_o
-                    eta_fin = _fin_efficiency(fin_type, h_o, k_fin, fin_thickness, h_b, D_o)
+                    eta_fin = _fin_efficiency(
+                        fin_type,
+                        h_o,
+                        k_fin,
+                        fin_thickness,
+                        h_b,
+                        D_o,
+                        pitch=pitch,
+                        pitch_parallel=geom.get("pitch_parallel", pitch),
+                    )
                 except Exception as exc:
                     warnings.append(f"Kanatçık korelasyonu uygulanamadı; Grimison tube-bank fallback: {exc}")
                     eta_fin = 1.0
@@ -1050,6 +1185,18 @@ class FinTubeHeatExchanger:
             h_o = (Nu_o * fluid_out.k_cond) / D_e
             eta_fin = 1.0
             warnings.append(f"Gövde-boru Kern metodu: Re_s={Re_o:.0f}, Nu_s={Nu_o:.2f}, D_e={D_e:.4f}m")
+            if self.baffle_cut < 0.15 or self.baffle_cut > 0.45:
+                _append_unique(
+                    warnings,
+                    f"Deflektör kesim oranı (baffle cut) = {self.baffle_cut:.2f} TEMA önerilen aralığı (%15–%45) dışında. "
+                    "Kern metodu bu etkiyi doğrudan modellemez; Bell-Delaware yöntemi ile doğrulama önerilir.",
+                )
+            if self.shell_passes > 1:
+                _append_unique(
+                    warnings,
+                    f"Gövde geçiş sayısı = {self.shell_passes} (E/F-shell). Bowman F-faktörü yalnızca tek gövde geçişli "
+                    "(1-N) konfigürasyon için geçerlidir; çok gövde geçişli tasarımlarda seri eşanjör/ayrı modelleme kullanın.",
+                )
         else:
             # Çift Borulu — annulus tarafı
             D_shell = geom.get("D_shell", D_o * 1.5)
@@ -1128,6 +1275,12 @@ class FinTubeHeatExchanger:
             delta_p_tube = f_i * (L / D_i) * (fluid_in.density * v_in**2 / 2.0)
             if Re_i < 2300:
                 delta_p_tube *= 1.1  # approximate laminar correction for developing flow
+            # Çok geçişli dönüş kafaları + nozul lokal kayıpları (Faz 2.2)
+            if self.tube_passes > 1:
+                delta_p_local = (
+                    LOCAL_LOSS_VELOCITY_HEADS_PER_PASS * self.tube_passes * (fluid_in.density * v_in**2 / 2.0)
+                )
+                delta_p_tube += delta_p_local
         except Exception as exc:
             warnings.append(f"Boru içi basınç düşüşü hesaplanamadı: {exc}")
 
@@ -1149,6 +1302,22 @@ class FinTubeHeatExchanger:
                 N_b = max(1, int(L / baffle_spacing - 1))
                 f_kern = np.exp(0.576 - 0.19 * np.log(max(Re_o, 1.0)))
                 delta_p_shell = f_kern * G_s**2 * D_shell * (N_b + 1) / (2.0 * fluid_out.density * max(D_e, 1e-6))
+                # Faz 2.3: TEMA akış kaynaklı titreşim ön değerlendirmesi
+                v_shell = G_s / fluid_out.density
+                rho_v2 = fluid_out.density * v_shell**2
+                if rho_v2 > TEMA_RHO_V2_LIMIT:
+                    _append_unique(
+                        warnings,
+                        f"TEMA titreşim kontrolü: ρv² = {rho_v2:.0f} kg/(m·s²) > {TEMA_RHO_V2_LIMIT:.0f} limiti. "
+                        "Giriş nozuluna impingement plate (çarptırma plakası) ekleyin veya nozul çapını büyütün.",
+                    )
+                max_span = MAX_UNSUPPORTED_SPAN_FACTOR * D_o
+                if baffle_spacing > max_span:
+                    _append_unique(
+                        warnings,
+                        f"TEMA desteklenmeyen boru boyu: baffle aralığı = {baffle_spacing*1000:.0f} mm > "
+                        f"{max_span*1000:.0f} mm (limit). Titreşim riski — baffle aralığını düşürün.",
+                    )
             elif self.exchanger_type == EXCHANGER_TYPE_DOUBLE:
                 D_h_ann = geom.get("D_shell", D_o * 1.5) - D_o
                 D_h_ann = max(D_h_ann, 1e-6)
@@ -1160,6 +1329,22 @@ class FinTubeHeatExchanger:
                 delta_p_shell = f_ann * (L / D_h_ann) * (fluid_out.density * v_out**2 / 2.0)
         except Exception as exc:
             warnings.append(f"Dış taraf basınç düşüşü hesaplanamadı: {exc}")
+
+        # --- POMPA / FAN GÜCÜ (Faz 2.1) ---
+        pump_power_tube = 0.0
+        pump_power_shell = 0.0
+        try:
+            vol_flow_tube = m_in / fluid_in.density
+            eta_tube = FAN_EFFICIENCY if fluid_in.density < 100.0 else PUMP_EFFICIENCY
+            pump_power_tube = vol_flow_tube * delta_p_tube / eta_tube
+        except Exception as exc:
+            warnings.append(f"Boru tarafı pompa gücü hesaplanamadı: {exc}")
+        try:
+            vol_flow_shell = m_out / fluid_out.density
+            eta_shell = FAN_EFFICIENCY if fluid_out.density < 100.0 else PUMP_EFFICIENCY
+            pump_power_shell = vol_flow_shell * delta_p_shell / eta_shell
+        except Exception as exc:
+            warnings.append(f"Gövde/kanat tarafı fan gücü hesaplanamadı: {exc}")
 
         return {
             "U": self.U,
@@ -1176,15 +1361,30 @@ class FinTubeHeatExchanger:
             "eta_fin": eta_fin,
             "delta_p_tube": delta_p_tube,
             "delta_p_shell": delta_p_shell,
+            "pump_power_tube": pump_power_tube,
+            "pump_power_shell": pump_power_shell,
+            "shell_passes": self.shell_passes,
+            "tube_passes": self.tube_passes,
+            "baffle_cut": self.baffle_cut,
             "status": "warning" if warnings else "ok",
             "warnings": warnings,
         }
 
+    def run_solvers(self, m_hot: float, m_cold: float, T_hot_in: float, T_cold_in: float) -> list[dict]:
+        """Dört çözücüyü de çalıştırıp bağımsız doğrulama (cross-check) listesi döndürür.
+
+        [custom ε-NTU, custom LMTD, ht ε-NTU, ht LMTD]. UI'lardaki tekrarı ortadan kaldırır.
+        """
+        return [
+            self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom"),
+            self.solve_custom_lmtd(m_hot, m_cold, T_hot_in, T_cold_in),
+            self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht"),
+            self.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht"),
+        ]
+
     def cross_check(self, m_hot: float, m_cold: float, T_hot_in: float, T_cold_in: float):
         """Dört farklı kombinasyonu hesaplar ve birbirleriyle kıyaslar."""
-        res_ntu_custom = self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
-        res_ntu_ht = self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
-        res_lmtd_ht = self.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
+        res_ntu_custom, res_custom_lmtd, res_ntu_ht, res_lmtd_ht = self.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in)
 
         print(f"| {'Method':<20} | {'Source':<10} | {'Q [W]':<15} | {'T_h_out [C]':<15} | {'T_c_out [C]':<15} |")
         print("-" * 86)

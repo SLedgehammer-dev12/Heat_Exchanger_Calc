@@ -18,12 +18,16 @@ LOG_FILE = setup_logging("web")
 logger = logging.getLogger(__name__)
 
 
-from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES
+from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES, TEMA_DESIGNATIONS
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
 from reporting import build_calculation_report, build_calculation_report_pdf
+from standards import fouling_preset_options, tube_preset_options
 from updater import check_for_update, default_download_dir, download_release_asset
 from version import APP_NAME, VERSION
+
+_bwg_presets = tube_preset_options()
+_fouling_presets = fouling_preset_options()
 
 # Eşanjör tipi seçenekleri (görünen isim -> internal key)
 EXCH_TYPE_OPTIONS = list(EXCHANGER_TYPES.values())
@@ -367,6 +371,20 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
             report_text,
             file_name="isi_degistirici_raporu.txt",
         )
+        pdf_images = []
+        for fig_fn, caption, h_mm in (
+            (_hx.plot_enhanced_schematic, "Akış Şeması", 60.0),
+            (_hx.plot_temperature_profile, "Sıcaklık Profili", 55.0),
+        ):
+            try:
+                fig = fig_fn(result=res_main)
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+                pdf_images.append({"buffer": buf, "caption": caption, "width_mm": 170.0, "height_mm": h_mm})
+            except Exception as exc:
+                logger.warning("Rapor görseli üretilemedi: %s", exc)
+        if pdf_images:
+            report_context["images"] = pdf_images
         st.download_button(
             "Sonuç Raporunu İndir (.pdf)",
             build_calculation_report_pdf(report_context),
@@ -685,8 +703,25 @@ with tab_geom:
         g1, g2, g3 = st.columns(3)
 
         with g1:
-            D_o_mm = st.number_input("Dış Çap - Do (mm)", value=float(get_val("D_o_mm")))
-            D_i_mm = st.number_input("İç Çap - Di (mm)", value=float(get_val("D_i_mm")))
+            bwg_labels = ["Manuel"] + [p["label"] for p in _bwg_presets]
+            bwg_sel = st.selectbox(
+                "Boru Preseti (BWG)",
+                options=bwg_labels,
+                index=safe_index(bwg_labels, get_val("bwg_preset") or "Manuel"),
+            )
+            if bwg_sel != "Manuel":
+                for p in _bwg_presets:
+                    if p["label"] == bwg_sel:
+                        D_o_mm = float(p["D_o_mm"])
+                        D_i_mm = float(p["D_i_mm"])
+                        break
+                current_data["D_o_mm"] = D_o_mm
+                current_data["D_i_mm"] = D_i_mm
+            else:
+                D_o_mm = st.number_input("Dış Çap - Do (mm)", value=float(get_val("D_o_mm")))
+                D_i_mm = st.number_input("İç Çap - Di (mm)", value=float(get_val("D_i_mm")))
+                current_data.update({"D_o_mm": D_o_mm, "D_i_mm": D_i_mm})
+            current_data["bwg_preset"] = bwg_sel
             L_m = st.number_input("Boru Uzunluğu - L (m)", value=float(get_val("L_m")))
             N_tubes = st.number_input("Boru Sayısı", value=int(get_val("N_tubes")), step=1)
 
@@ -695,7 +730,7 @@ with tab_geom:
             geom_dict["L"] = L_m
             geom_dict["N_tubes"] = N_tubes
 
-            current_data.update({"D_o_mm": D_o_mm, "D_i_mm": D_i_mm, "L_m": L_m, "N_tubes": N_tubes})
+            current_data.update({"L_m": L_m, "N_tubes": N_tubes})
 
         with g2:
             mat_options = {
@@ -721,6 +756,47 @@ with tab_geom:
                 geom_dict["D_shell"] = D_shell_mm / 1000.0
                 current_data["D_shell_mm"] = D_shell_mm
 
+                if exch_type_internal == "shell_and_tube":
+                    baffle_spacing_mm = st.number_input(
+                        "Deflektör Aralığı (mm)", value=float(get_val("baffle_spacing_mm") or 200.0)
+                    )
+                    baffle_cut = st.number_input(
+                        "Deflektör Kesim Oranı", value=float(get_val("baffle_cut") or 0.25), min_value=0.0, max_value=0.5
+                    )
+                    layout_angle = st.selectbox(
+                        "Yerleşim Açısı",
+                        options=["30", "45", "60", "90"],
+                        index=safe_index(["30", "45", "60", "90"], get_val("tube_layout_angle") or "30"),
+                    )
+                    shell_passes = st.number_input(
+                        "Gövde Geçişi", value=int(get_val("shell_passes") or 1), min_value=1, max_value=16, step=1
+                    )
+                    tube_passes = st.number_input(
+                        "Boru Geçişi", value=int(get_val("tube_passes") or 2), min_value=1, max_value=16, step=1
+                    )
+                    tema_labels = ["—"] + list(TEMA_DESIGNATIONS.keys())
+                    tema_designation = st.selectbox(
+                        "TEMA İsimlendirme",
+                        options=tema_labels,
+                        index=safe_index(tema_labels, get_val("tema_designation") or "—"),
+                    )
+                    geom_dict["baffle_spacing"] = baffle_spacing_mm / 1000.0
+                    geom_dict["baffle_cut"] = baffle_cut
+                    geom_dict["tube_layout_angle"] = layout_angle
+                    geom_dict["shell_passes"] = int(shell_passes)
+                    geom_dict["tube_passes"] = int(tube_passes)
+                    geom_dict["tema_designation"] = tema_designation
+                    current_data.update(
+                        {
+                            "baffle_spacing_mm": baffle_spacing_mm,
+                            "baffle_cut": baffle_cut,
+                            "tube_layout_angle": layout_angle,
+                            "shell_passes": int(shell_passes),
+                            "tube_passes": int(tube_passes),
+                            "tema_designation": tema_designation,
+                        }
+                    )
+
             hot_is_tube_str = st.radio(
                 "İç Boruda Hangi Akışkan Var?",
                 ["Soğuk Akışkan", "Sıcak Akışkan"],
@@ -729,8 +805,17 @@ with tab_geom:
             hot_is_tube = hot_is_tube_str == "Sıcak Akışkan"
             current_data["hot_is_tube"] = hot_is_tube_str
 
-            R_f_i = st.number_input("Fouling İç (m2K/W)", value=float(get_val("R_f_i") or 0.0), format="%.6f")
-            R_f_o = st.number_input("Fouling Dış (m2K/W)", value=float(get_val("R_f_o") or 0.0), format="%.6f")
+            fouling_labels = [lbl for lbl, _v in _fouling_presets]
+            fouling_sel = st.selectbox(
+                "Fouling Preseti (TEMA)",
+                options=fouling_labels,
+                index=safe_index(fouling_labels, get_val("fouling_preset") or "Temiz (yok)"),
+            )
+            for lbl, val in _fouling_presets:
+                if lbl == fouling_sel:
+                    R_f_i = R_f_o = float(val)
+                    break
+            current_data["fouling_preset"] = fouling_sel
             geom_dict["R_f_i"] = R_f_i
             geom_dict["R_f_o"] = R_f_o
             current_data["R_f_i"] = R_f_i
@@ -882,10 +967,7 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
             hx.A = Area
 
         try:
-            res_custom = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
-            res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot_in, T_cold_in)
-            res_ht = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
-            res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
+            res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in)
             crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
 
             for _iter in range(2):
@@ -928,10 +1010,7 @@ if not hata_var and st.button("HESAPLA", use_container_width=True, type="primary
                 else:
                     hx.U = U_value
                     hx.A = Area
-                res_custom = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
-                res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot_in, T_cold_in)
-                res_ht = hx.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
-                res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot_in, T_cold_in, source="ht")
+                res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot_in, T_cold_in)
                 crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
 
             pychemengg_warning = None

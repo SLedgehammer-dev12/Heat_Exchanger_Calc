@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -33,7 +35,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config import EXCHANGER_ALLOWED_FLOWS
+from config import EXCHANGER_ALLOWED_FLOWS, TEMA_DESIGNATIONS
 from engineering_utils import (
     fluid_report_data,
     to_celsius,
@@ -44,6 +46,7 @@ from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_dat
 from heat_exchanger import FinTubeHeatExchanger, Fluid
 from logging_config import setup_logging
 from reporting import build_calculation_report, build_calculation_report_pdf
+from standards import fouling_preset_options, tube_preset_options
 from updater import check_for_update, default_download_dir, download_release_asset
 from version import APP_NAME, VERSION
 
@@ -219,10 +222,7 @@ def compute_desktop_calculation(snapshot):
         hx.U = snapshot["U"]
         hx.A = snapshot["A"]
 
-    res_custom = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="custom")
-    res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot, T_cold)
-    res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="ht")
-    res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source="ht")
+    res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot, T_cold)
     crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
 
     # Iterative property refinement at midpoint temperatures (2 additional passes)
@@ -271,10 +271,7 @@ def compute_desktop_calculation(snapshot):
         else:
             hx.U = snapshot["U"]
             hx.A = snapshot["A"]
-        res_custom = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="custom")
-        res_custom_lmtd = hx.solve_custom_lmtd(m_hot, m_cold, T_hot, T_cold)
-        res_ht = hx.solve_ntu(m_hot, m_cold, T_hot, T_cold, source="ht")
-        res_lmtd = hx.solve_lmtd(m_hot, m_cold, T_hot, T_cold, source="ht")
+        res_custom, res_custom_lmtd, res_ht, res_lmtd = hx.run_solvers(m_hot, m_cold, T_hot, T_cold)
         crosscheck_results = [res_custom, res_custom_lmtd, res_ht, res_lmtd]
         logger.debug("Midpoint iteration %d: Tho=%.1f Tco=%.1f", _iter + 1, t_ho, t_co)
     # End of iterative property refinement
@@ -809,6 +806,27 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.spin_rf_o.setValue(0.0)
         self.spin_rf_o.setSuffix(" m2K/W")
 
+        self.spin_baffle_spacing = QDoubleSpinBox()
+        self.spin_baffle_spacing.setRange(1, 10000)
+        self.spin_baffle_spacing.setValue(200.0)
+        self.spin_baffle_spacing.setSuffix(" mm")
+        self.spin_baffle_cut = QDoubleSpinBox()
+        self.spin_baffle_cut.setRange(0.0, 0.5)
+        self.spin_baffle_cut.setDecimals(3)
+        self.spin_baffle_cut.setSingleStep(0.01)
+        self.spin_baffle_cut.setValue(0.25)
+        self.combo_layout_angle = QComboBox()
+        self.combo_layout_angle.addItems(["30", "45", "60", "90"])
+        self.spin_shell_passes = QSpinBox()
+        self.spin_shell_passes.setRange(1, 16)
+        self.spin_shell_passes.setValue(1)
+        self.spin_tube_passes = QSpinBox()
+        self.spin_tube_passes.setRange(1, 16)
+        self.spin_tube_passes.setValue(2)
+        self.combo_tema = QComboBox()
+        self.combo_tema.addItem("—")
+        self.combo_tema.addItems(list(TEMA_DESIGNATIONS.keys()))
+
         self.combo_tube_mat = QComboBox()
         self.tube_mats = {"Karbon Çelik": 45.0, "Paslanmaz Çelik 316": 16.0, "Bakır": 400.0, "Alüminyum": 237.0}
         self.combo_tube_mat.addItems(list(self.tube_mats.keys()))
@@ -837,13 +855,34 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_fin_type.addItems(["Dairesel (Annular)", "Düz (Rectangular)"])
         self.chk_finned.toggled.connect(self.toggle_finned)
 
+        self.combo_bwg_preset = QComboBox()
+        self._bwg_presets = tube_preset_options()
+        self.combo_bwg_preset.addItem("Manuel")
+        for p in self._bwg_presets:
+            self.combo_bwg_preset.addItem(p["label"])
+        self.combo_bwg_preset.currentIndexChanged.connect(self.on_bwg_preset_changed)
+
+        self.combo_fouling_preset = QComboBox()
+        self._fouling_presets = fouling_preset_options()
+        for label, _val in self._fouling_presets:
+            self.combo_fouling_preset.addItem(label)
+        self.combo_fouling_preset.currentIndexChanged.connect(self.on_fouling_preset_changed)
+
         form_geo.addRow("Dış Çap (Do):", self.spin_do)
         form_geo.addRow("İç Çap (Di):", self.spin_di)
+        form_geo.addRow("Boru Preseti (BWG):", self.combo_bwg_preset)
         form_geo.addRow("Boru Uzunluğu:", self.spin_l)
         form_geo.addRow("Boru Sayısı:", self.spin_nt)
         form_geo.addRow("Gövde İç Çapı:", self.spin_d_shell)
+        form_geo.addRow("Deflektör Aralığı:", self.spin_baffle_spacing)
+        form_geo.addRow("Deflektör Kesim Oranı:", self.spin_baffle_cut)
+        form_geo.addRow("Yerleşim Açısı:", self.combo_layout_angle)
+        form_geo.addRow("Gövde Geçişi:", self.spin_shell_passes)
+        form_geo.addRow("Boru Geçişi:", self.spin_tube_passes)
+        form_geo.addRow("TEMA İsimlendirme:", self.combo_tema)
         form_geo.addRow("Fouling İç:", self.spin_rf_i)
         form_geo.addRow("Fouling Dış:", self.spin_rf_o)
+        form_geo.addRow("Fouling Preseti (TEMA):", self.combo_fouling_preset)
         form_geo.addRow("Boru Malzemesi:", self.combo_tube_mat)
         form_geo.addRow("İç Boruda:", self.combo_hot_tube)
         form_geo.addRow("Kanatçık?:", self.chk_finned)
@@ -997,6 +1036,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                 if selected_filter.startswith("PDF") or fileName.lower().endswith(".pdf"):
                     if not fileName.lower().endswith(".pdf"):
                         fileName += ".pdf"
+                    self._attach_report_images()
                     with open(fileName, "wb") as f:
                         f.write(build_calculation_report_pdf(self.last_report_context))
                 else:
@@ -1008,6 +1048,18 @@ class HeatExchangerDesktopApp(QMainWindow):
                 QMessageBox.information(self, "Başarılı", "Rapor başarıyla kaydedildi!")
             except Exception as e:
                 self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
+
+    def _attach_report_images(self):
+        images = []
+        for fig, caption, h in ((self.figure, "Akış Şeması", 60.0), (self.figure_profile, "Sıcaklık Profili", 55.0)):
+            try:
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+                images.append({"buffer": buf, "caption": caption, "width_mm": 170.0, "height_mm": h})
+            except Exception as exc:
+                logger.warning("Rapor görseli üretilemedi: %s", exc)
+        if images:
+            self.last_report_context["images"] = images
 
     def append_log(self, msg, levelno):
         if len(self.all_logs) > 5000:
@@ -1131,6 +1183,22 @@ class HeatExchangerDesktopApp(QMainWindow):
         for widget in (self.spin_fin_h, self.spin_fin_t, self.spin_fin_dens, self.combo_fin_mat, self.combo_fin_type):
             widget.setVisible(checked)
 
+    def on_bwg_preset_changed(self):
+        idx = self.combo_bwg_preset.currentIndex()
+        if idx <= 0:
+            return
+        preset = self._bwg_presets[idx - 1]
+        self.spin_do.setValue(preset["D_o_mm"])
+        self.spin_di.setValue(preset["D_i_mm"])
+
+    def on_fouling_preset_changed(self):
+        label = self.combo_fouling_preset.currentText()
+        for lbl, val in self._fouling_presets:
+            if lbl == label:
+                self.spin_rf_i.setValue(val)
+                self.spin_rf_o.setValue(val)
+                return
+
     def is_exhaust_mixture(self, text):
         data = get_fluid_data(text) or {}
         return bool(data.get("is_mixture")) or "Egzoz" in text or "Kompozisyon" in text
@@ -1199,6 +1267,17 @@ class HeatExchangerDesktopApp(QMainWindow):
         is_finned = exch_internal == "finned_tube"
         self.chk_finned.setVisible(is_finned)
         self.toggle_finned(is_finned and self.chk_finned.isChecked())
+        # Show/hide shell-specific fields only for shell-and-tube
+        is_shell = exch_internal == "shell_and_tube"
+        for widget in (
+            self.spin_baffle_spacing,
+            self.spin_baffle_cut,
+            self.combo_layout_angle,
+            self.spin_shell_passes,
+            self.spin_tube_passes,
+            self.combo_tema,
+        ):
+            widget.setVisible(is_shell)
 
     def save_data(self):
         options = QFileDialog.Options()
@@ -1264,6 +1343,12 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_dens": self.spin_fin_dens.value(),
                 "fin_mat": self.combo_fin_mat.currentText(),
                 "fin_type": self.combo_fin_type.currentText(),
+                "baffle_spacing": self.spin_baffle_spacing.value(),
+                "baffle_cut": self.spin_baffle_cut.value(),
+                "tube_layout_angle": self.combo_layout_angle.currentText(),
+                "shell_passes": self.spin_shell_passes.value(),
+                "tube_passes": self.spin_tube_passes.value(),
+                "tema_designation": self.combo_tema.currentText(),
             }
             with open(fileName, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -1325,6 +1410,12 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_fin_dens.setValue(data.get("fin_dens", 400.0))
                 self.combo_fin_mat.setCurrentText(data.get("fin_mat", "Alüminyum (k=237)"))
                 self.combo_fin_type.setCurrentText(data.get("fin_type", "Dairesel (Annular)"))
+                self.spin_baffle_spacing.setValue(data.get("baffle_spacing", 200.0))
+                self.spin_baffle_cut.setValue(data.get("baffle_cut", 0.25))
+                self.combo_layout_angle.setCurrentText(data.get("tube_layout_angle", "30"))
+                self.spin_shell_passes.setValue(data.get("shell_passes", 1))
+                self.spin_tube_passes.setValue(data.get("tube_passes", 2))
+                self.combo_tema.setCurrentText(data.get("tema_designation", "—"))
                 self.toggle_finned(self.chk_finned.isChecked())
                 self.toggle_hot_fluid(self.combo_hot.currentText())
                 self.toggle_cold_fluid(self.combo_cold.currentText())
@@ -1407,8 +1498,13 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_type": "rectangular" if "Rectangular" in self.combo_fin_type.currentText() else "annular",
                 "pitch": self.spin_do.value() * 2 / 1000.0,
                 "pitch_parallel": self.spin_do.value() * 2 / 1000.0,
-                "tube_layout_angle": "30",
+                "tube_layout_angle": self.combo_layout_angle.currentText(),
                 "tube_arrangement": "staggered",
+                "baffle_spacing": self.spin_baffle_spacing.value() / 1000.0,
+                "baffle_cut": self.spin_baffle_cut.value(),
+                "shell_passes": self.spin_shell_passes.value(),
+                "tube_passes": self.spin_tube_passes.value(),
+                "tema_designation": self.combo_tema.currentText(),
                 "D_shell": self.spin_d_shell.value() / 1000.0,
                 "R_f_i": self.spin_rf_i.value(),
                 "R_f_o": self.spin_rf_o.value(),

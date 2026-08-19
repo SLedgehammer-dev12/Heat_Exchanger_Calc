@@ -28,6 +28,7 @@ $common = @(
     "--hidden-import", "helpers",
     "--hidden-import", "correlations",
     "--hidden-import", "plot_theme",
+    "--hidden-import", "standards",
     "--collect-data", "chemicals",
     "--collect-data", "thermo",
     "--collect-data", "fluids",
