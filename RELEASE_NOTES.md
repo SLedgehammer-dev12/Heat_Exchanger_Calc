@@ -1,3 +1,44 @@
+# Heat Exchanger Calc v0.4.0
+
+Comprehensive industrial standards, rigorous correlations, and multi-platform architecture release.
+Follows the 4-phase master engineering overhaul and 55-scenario benchmark validation.
+
+## Fluid Dynamics & Geometric Precision (Faz 1)
+
+- **Multipass Flow Area & Velocity Fix** — Fixed tube-side cross-sectional flow area $A_{c,i} = \frac{N}{n_{passes}} \frac{\pi D_i^2}{4}$ and akış boyu $L_{flow} = L \cdot n_{passes}$. Multi-pass velocity is no longer underestimated by $1/n_{passes}$.
+- **Annular Fin Geometric Formulation** — Circular fin surface area now accounts for both faces plus the fin tip: $A_{fin} = 2\pi h_b (D_o + h_b) + \pi D_{fin} t_f$.
+- **Weighted Overall Surface Efficiency ($\eta_o$)** — Total outside thermal resistance now strictly applies $\eta_o = (A_{bare} + \eta_{fin} A_{fin}) / A_{total}$ rather than penalizing bare tube area with fin efficiency.
+- **Fin Blockage on Minimum Free Area ($A_{min}$)** — Transverse fin frontal area obstruction is subtracted from free flow area $A_{min} = L \cdot [W - N_T D_o - N_T (2 h_b t_f n_f)]$, preventing severe under-prediction of air velocity and pressure drop.
+- **ASME UG-27(c)(1) Outer Radius Formula & TEMA RCB-1.511** — Thin cylindrical shell equation converted to outer diameter formulation for tubes ($t = \frac{P R_o}{S E + 0.4 P}$); corrosion allowance is strictly set to zero on heat exchanger tubes per TEMA standards.
+
+## Rigorous Correlations & Solvers (Faz 2)
+
+- **Bell-Delaware Analytical Shell-Side Model** — Pure Python analytical spline functions replace static heuristics, calculating all 5 Delaware factors: $J_c$ (baffle cut & window), $J_l$ (baffle-to-shell & tube-to-baffle leakage), $J_b$ (bundle bypass & sealing strips), $J_s$ (baffle spacing & inlet/outlet), and $J_r$ (laminar temperature gradient).
+- **API 661 / ISO 13706 Fin Attachment Catalog** — Integrated standard industrial fin styles: L-Fin (Wrap-on, max 130°C), LL-Fin (Overlapped L, max 150°C), KL-Fin (Knurled L, max 210°C), G-Fin (Embedded, max 350°C), and Extruded (Bimetallic, max 300°C), with contact resistance ($R_{contact}$) and continuous operating temperature limit alerts.
+- **Two-Phase Heat Transfer Overrides** — Added override hooks for tube-side and shell-side boiling/condensation ($h_{tp}$), bypassing single-phase Nu correlations when phase change is active.
+- **1D Numerical Segmented Solver (`solve_segmented`)** — Implemented an axial $N$-segment finite-volume $\epsilon$-NTU solver to track local property variations and non-linear axial temperature profiles.
+
+## Multi-Platform Architecture & Ergonomics (Faz 3)
+
+- **Shared Core Controller (`app_shared.py`)** — Consolidated UI input validation, property rebuilding, and calculation pipeline between PyQt5 desktop and Streamlit web applications.
+- **Full GNU gettext i18n Pipeline** — Turkish and English translation catalogs (`.po` / `.mo`) compiled with build automation tool (`tools/compile_locales.py`).
+- **Unicode Pint Unit Parsing** — Preprocessing normalization for micro ($\mu$ vs \u00b5), squared/cubed symbols, and degree characters across platforms.
+- **API 661 Fin Selection Dropdowns** — Both desktop and web interfaces feature dynamic fin attachment selection with automatic contact resistance injection and temperature validation warnings.
+
+## Industrial Deliverables & Standards (Faz 4)
+
+- **Expanded Alloy Library** — Added Titanium Gr. 2, Admiralty Brass (C44300), Cu-Ni 90/10 (C70600), Cu-Ni 70/30 (C71500), Duplex 2205, SS 304, and Inconel 625 with temperature-dependent thermal conductivity.
+- **Matrix Tube Bundle Layout ($N_T \times N_L$)** — Support for transverse rows and tubes per row input in ACHE and TEMA geometries.
+- **1-Page TEMA / API 661 Datasheet PDF** — Industrial standard tabular specification sheet generated with ReportLab.
+- **CSV Data Exports** — Calculation summary and 1D temperature/heat flux profile CSV exports.
+
+## Industrial Benchmark Verification
+
+- **55 Industrial Scenarios** evaluated spanning TEMA Gövde-Boru, API 661 ACHE, Çift Borulu, İki-Fazlı (Buhar, R134a, Organik, NH3, Reboiler), ve 1D Sayısal Çözücü.
+- **100% Pass Rate (55 / 55 PASS)** with $0.0000\%$ energy balance deviation ($\Delta Q = 0$).
+
+---
+
 # Heat Exchanger Calc v0.3.0
 
 Robustness, mechanical-design standards and two-phase UI release. Follows the

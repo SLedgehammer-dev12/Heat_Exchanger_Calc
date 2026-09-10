@@ -14,6 +14,7 @@ import ht
 
 from correlations import _bowman_lmtd_factor
 from plot_theme import PALETTE, SCHEMATIC_SIZE, TEMP_PROFILE_SIZE, apply_theme
+from standards import API661_FIN_TYPES
 
 apply_theme()
 from exceptions import (
@@ -224,36 +225,67 @@ def _bell_delaware_shell_h(
     tube_count: int,
     L: float,
     baffle_spacing: float,
+    Re_shell: float = 5000.0,
 ) -> tuple[float, dict[str, float]]:
-    """Opsiyonel Bell-Delaware gövde tarafı h_o modeli (Faz F3).
+    """Bell-Delaware (University of Delaware) gövde tarafı h_o modeli.
 
     h_o = h_id · J_c · J_l · J_b · J_s · J_r
 
-    Düzeltme katsayıları tipik mühendislik yaklaşımlarıyla üretilir:
-      J_c — deflektör kesimi (baffle cut) etkisi
-      J_l — deflektör-boru sızıntısı (leakage)
-      J_b — boru demeti bypass'ı
-      J_s — eşit olmayan deflektör aralığı
-      J_r — ters sıcaklık gradyanı (laminer)
+    ht kütüphanesinin analitik Bell-Delaware fonksiyonları (spline interpolasyonu)
+    ile TEMA geometrik toleransları üzerinden hesaplanır:
+      J_c — ht.baffle_correction_Bell (deflektör kesimi etkisi)
+      J_l — ht.baffle_leakage_Bell (gövde/boru deflektör sızıntıları)
+      J_b — ht.bundle_bypassing_Bell (boru demeti bypass'ı)
+      J_s — ht.unequal_baffle_spacing_Bell (giriş/çıkış deflektör aralığı)
+      J_r — ht.laminar_correction_Bell (laminer sıcaklık gradyanı)
     Döndürür: (h_o, {"J_c":..,"J_l":..,"J_b":..,"J_s":..,"J_r":..})
     """
     h_id = Nu_ideal * k_shell / max(D_o, 1e-9)
+    bc = max(0.05, min(0.45, baffle_cut))
 
-    bc = max(0.0, min(0.5, baffle_cut))
-    # J_c: kesim oranı ile artar; %25 kesim ~0.92, %45 ~0.98
-    J_c = min(1.0, 0.55 + 0.72 * (1.0 - 2.0 * bc))
-    J_c = max(0.6, J_c)
+    try:
+        # J_c: Deflektör penceresi dışındaki çapraz akış tüp kesri Fc ~ 1 - 2*bc
+        Fc = max(0.1, min(0.9, 1.0 - 2.0 * bc))
+        J_c = float(ht.baffle_correction_Bell(crossflow_tube_fraction=Fc))
 
-    N_b = max(1, int(L / max(baffle_spacing, 1e-9) - 1))
-    # J_l: deflektör sayısı artınca sızıntı etkisi büyür (küçülür)
-    J_l = max(0.6, 1.0 - 0.12 * np.log1p(N_b))
-    # J_b: dar demetlerde bypass ihmal edilir
-    tube_rows = max(1, int(np.sqrt(tube_count)))
-    J_b = max(0.85, 1.0 - 0.02 * tube_rows)
-    # J_s: tekdüze aralık varsayımı
-    J_s = 1.0
-    # J_r: türbülanslı akışta 1.0
-    J_r = 1.0
+        # J_s: Deflektör aralığı düzeltmesi
+        N_b = max(1, int(L / max(baffle_spacing, 1e-9) - 1))
+        J_s = float(ht.unequal_baffle_spacing_Bell(baffles=N_b, baffle_spacing=baffle_spacing))
+
+        # J_b: Demet bypass düzeltmesi (F_bp: bypass alan kesri ~0.15, N_ss=0, N_c: çapraz akış sıra sayısı)
+        N_c = max(1, int(np.sqrt(max(1, tube_count)) * (1.0 - 2.0 * bc)))
+        J_b = float(ht.bundle_bypassing_Bell(bypass_area_fraction=0.15, seal_strips=0, crossflow_rows=N_c))
+
+        # J_l: Deflektör sızıntıları (S_sb: gövde-deflektör, S_tb: boru-deflektör, S_m: çapraz akış alanı)
+        c_sb = float(ht.shell_clearance(DShell=D_shell))
+        S_sb = np.pi * D_shell * c_sb * (1.0 - bc / 2.0)
+        c_tb = 0.0008  # TEMA standart 0.8 mm boru-delik radyal boşluğu
+        S_tb = tube_count * (1.0 - bc) * (np.pi / 4.0) * ((D_o + c_tb) ** 2 - D_o**2)
+        S_m = max(1e-6, baffle_spacing * (D_shell - D_o * np.sqrt(tube_count) * 0.8))
+        J_l = float(ht.baffle_leakage_Bell(Ssb=max(1e-6, S_sb), Stb=max(1e-6, S_tb), Sm=max(1e-6, S_m)))
+
+        # J_r: Laminer akış düzeltmesi
+        if Re_shell < 100:
+            J_r = float(ht.laminar_correction_Bell(Re=max(1.0, Re_shell), total_row_passes=max(1, N_c * N_b)))
+        else:
+            J_r = 1.0
+
+    except Exception:
+        # Güvenli fallback
+        J_c = max(0.6, min(1.0, 0.55 + 0.72 * (1.0 - 2.0 * bc)))
+        N_b = max(1, int(L / max(baffle_spacing, 1e-9) - 1))
+        J_l = max(0.6, min(1.0, 1.0 - 0.12 * np.log1p(N_b)))
+        tube_rows = max(1, int(np.sqrt(tube_count)))
+        J_b = max(0.7, min(1.0, 1.0 - 0.02 * tube_rows))
+        J_s = 1.0
+        J_r = 1.0
+
+    # Katsayıları sınırla (fiziksel mühendislik aralığı: 0.5 <= J <= 1.0)
+    J_c = max(0.5, min(1.0, J_c))
+    J_l = max(0.5, min(1.0, J_l))
+    J_b = max(0.5, min(1.0, J_b))
+    J_s = max(0.5, min(1.0, J_s))
+    J_r = max(0.5, min(1.0, J_r))
 
     h_o = h_id * J_c * J_l * J_b * J_s * J_r
     return float(h_o), {"J_c": J_c, "J_l": J_l, "J_b": J_b, "J_s": J_s, "J_r": J_r}
@@ -894,44 +926,105 @@ class FinTubeHeatExchanger:
         }
 
     def solve_segmented(self, m_hot: float, m_cold: float, T_hot_in: float, T_cold_in: float, n_segments: int = 10):
-        """ε-NTU with segment-averaged midpoint temperatures for cross-check.
+        """1D Sayısal Dilimli (Discretized Finite-Volume) ε-NTU Çözücüsü.
 
-        Computes the single-pass solution, estimates the segment-averaged
-        temperatures for *n_segments* equal intervals, and reports the midpoint
-        values.  This provides a second opinion on the single-pass result and
-        helps flag cases where temperature-dependent property variation matters.
+        Eşanjör yüzeyini n_segments eşit dilime (ΔA = A / n) böler.
+        Her dilimde yerel ΔNTU ve yerel Cr üzerinden segment etkinliği ε_i
+        ve aktarılan ısı ΔQ_i hesaplanarak adım adım entegre edilir.
+        Ters akışta (counterflow) iteratif shoot/bisection integrasyonu uygulanır.
         """
         C_h, C_c = self._capacity_rates(m_hot, m_cold, T_hot_in, T_cold_in)
         C_min = min(C_h, C_c)
         C_max = max(C_h, C_c)
         Cr = C_min / C_max if C_max > 0 else 1.0
 
-        res = self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
-        warnings = list(res.get("warnings", []))
+        n_segments = max(2, int(n_segments))
+        dA = self.A / n_segments
+        dNTU = (self.U * dA) / C_min
+        eps_seg = self._segment_effectiveness(dNTU, Cr)
 
-        t_ho = res["T_hot_out [C]"]
-        t_co = res["T_cold_out [C]"]
-        T_h_sum = 0.0
-        T_c_sum = 0.0
-        for i in range(n_segments):
-            frac = (i + 0.5) / n_segments
-            T_h_sum += T_hot_in + (t_ho - T_hot_in) * frac
-            T_c_sum += T_cold_in + (t_co - T_cold_in) * frac
+        warnings = []
+        phase_warns = self._check_phase_change(T_hot_in, T_cold_in)
+        for pw in phase_warns:
+            _append_unique(warnings, pw)
+
+        if self.flow_type == "parallel":
+            # Paralel akış: İki akışkan da segment 0'dan başlar
+            T_h = T_hot_in
+            T_c = T_cold_in
+            T_h_list = [T_h]
+            T_c_list = [T_c]
+            Q_total = 0.0
+            for _ in range(n_segments):
+                dQ = eps_seg * C_min * (T_h - T_c)
+                dQ = max(0.0, dQ)
+                Q_total += dQ
+                T_h -= dQ / C_h
+                T_c += dQ / C_c
+                T_h_list.append(T_h)
+                T_c_list.append(T_c)
+            t_ho = T_h
+            t_co = T_c
+        else:
+            # Ters akış veya çapraz akış:
+            # Soğuk çıkış sıcaklığını tahmin eden kök bulucu
+            def residual(t_cold_out_guess):
+                T_h = T_hot_in
+                T_c = t_cold_out_guess
+                for _ in range(n_segments):
+                    dQ = eps_seg * C_min * max(0.0, T_h - T_c)
+                    T_h -= dQ / C_h
+                    T_c -= dQ / C_c
+                return T_c - T_cold_in
+
+            try:
+                t_co_found = opt.brentq(residual, T_cold_in + 1e-4, T_hot_in - 1e-4)
+                T_h = T_hot_in
+                T_c = t_co_found
+                T_h_list = [T_h]
+                T_c_list = [T_c]
+                Q_total = 0.0
+                for _ in range(n_segments):
+                    dQ = eps_seg * C_min * max(0.0, T_h - T_c)
+                    Q_total += dQ
+                    T_h -= dQ / C_h
+                    T_c -= dQ / C_c
+                    T_h_list.append(T_h)
+                    T_c_list.append(T_c)
+                t_ho = T_h
+                t_co = t_co_found
+            except Exception:
+                res = self.solve_ntu(m_hot, m_cold, T_hot_in, T_cold_in, source="custom")
+                t_ho = res["T_hot_out [C]"]
+                t_co = res["T_cold_out [C]"]
+                Q_total = res["Q [W]"]
+                T_h_list = [T_hot_in + (t_ho - T_hot_in) * (i / n_segments) for i in range(n_segments + 1)]
+                T_c_list = [T_cold_in + (t_co - T_cold_in) * (i / n_segments) for i in range(n_segments + 1)]
+                warnings.append("Segmentli sayısal çözücü kök bulamadı; standart NTU profiline düşüldü.")
+
+        q_max = C_min * (T_hot_in - T_cold_in)
+        epsilon_total = Q_total / q_max if q_max > 0 else 0.0
+        NTU_total = (self.U * self.A) / C_min
+
+        T_h_mid = float(np.mean(T_h_list))
+        T_c_mid = float(np.mean(T_c_list))
 
         return {
             "Method": "Epsilon-NTU (Segmented)",
             "Source": f"custom-{n_segments}seg",
-            "Q [W]": res["Q [W]"],
-            "epsilon": res["epsilon"],
+            "Q [W]": float(Q_total),
+            "epsilon": float(epsilon_total),
             "T_hot_in [C]": T_hot_in,
             "T_cold_in [C]": T_cold_in,
-            "T_hot_out [C]": t_ho,
-            "T_cold_out [C]": t_co,
-            "NTU": res["NTU"],
+            "T_hot_out [C]": float(t_ho),
+            "T_cold_out [C]": float(t_co),
+            "NTU": float(NTU_total),
             "C_r": Cr,
             "n_segments": n_segments,
-            "T_h_mid [C]": round(T_h_sum / n_segments, 1),
-            "T_c_mid [C]": round(T_c_sum / n_segments, 1),
+            "T_h_mid [C]": round(T_h_mid, 1),
+            "T_c_mid [C]": round(T_c_mid, 1),
+            "T_h_profile": [round(t, 2) for t in T_h_list],
+            "T_c_profile": [round(t, 2) for t in T_c_list],
             "status": "warning" if warnings else "ok",
             "warnings": warnings,
         }
@@ -1070,7 +1163,13 @@ class FinTubeHeatExchanger:
         D_o = geom["D_o"]
         D_i = geom["D_i"]
         L = geom["L"]
-        N = geom.get("N_tubes", 1)
+        # Matris boru yerleşimi desteği (N_T x N_L)
+        N_T_in = geom.get("N_transverse") or geom.get("N_T")
+        N_L_in = geom.get("N_rows") or geom.get("N_L") or geom.get("N_longitudinal")
+        if N_T_in and N_L_in and float(N_T_in) > 0 and float(N_L_in) > 0:
+            N = int(float(N_T_in) * float(N_L_in))
+        else:
+            N = geom.get("N_tubes", 1)
         k_wall = geom["k_wall"]
         R_f_i = float(geom.get("R_f_i", 0.0) or 0.0)
         R_f_o = float(geom.get("R_f_o", 0.0) or 0.0)
@@ -1116,7 +1215,10 @@ class FinTubeHeatExchanger:
             )
 
         # --- İÇ TAŞINIM (h_i) ---
-        A_c_i = N * (np.pi * D_i**2) / 4.0
+        # Çok geçişli eşanjörde geçiş başına boru sayısı (N / tube_passes)
+        n_passes = max(1, self.tube_passes)
+        n_tubes_per_pass = max(1.0, float(N) / float(n_passes))
+        A_c_i = n_tubes_per_pass * (np.pi * D_i**2) / 4.0
         v_in = m_in / (fluid_in.density * A_c_i)
         if FLUIDS_AVAILABLE:
             Re_i = fluids_core.Reynolds(V=v_in, D=D_i, rho=fluid_in.density, mu=fluid_in.mu)
@@ -1130,6 +1232,15 @@ class FinTubeHeatExchanger:
         Nu_i = self._nusselt_internal(Re_i, Pr_i, n_factor, 3.66, "İç taraf", warnings, gz=gz_i)
         h_i = (Nu_i * fluid_in.k_cond) / D_i
 
+        # İki-fazlı mod (kondenser/evaporatör): iç tarafta faz değişimi kontrolü
+        is_two_phase_in = bool(geom.get("is_two_phase_tube", False)) or (
+            hot_is_tube and getattr(self.hot_fluid, "h_fg", None) and not self.hot_fluid.single_phase
+        )
+        h_tp_in = float(geom.get("h_two_phase_tube", 0.0) or geom.get("h_tp_tube", 0.0) or 0.0)
+        if is_two_phase_in:
+            h_i = h_tp_in if h_tp_in > 0 else 4500.0
+            warnings.append(f"İç taraf iki-fazlı mod: h_i = {h_i:.0f} W/m²K (faz değişimi taşınım katsayısı) uygulandı.")
+
         # --- DUVAR İLETİM DİRENCİ (R_wall) ---
         R_wall = np.log(D_o / D_i) / (2 * np.pi * k_wall * L * N)
 
@@ -1139,8 +1250,17 @@ class FinTubeHeatExchanger:
             pitch = _require_positive("Transverse pitch", pitch)
             if pitch <= D_o:
                 raise InvalidGeometryError("Transverse pitch dış çaptan büyük olmalıdır.")
-            W_estimate = np.sqrt(N) * pitch
-            A_min = (W_estimate - np.sqrt(N) * D_o) * L
+            n_transverse = float(N_T_in) if N_T_in and float(N_T_in) > 0 else max(1.0, np.sqrt(N))
+            W_estimate = n_transverse * pitch
+            # Kanat tıkanma etkisi (fin blockage) hesaba katılır
+            if geom.get("is_finned", False):
+                h_b_val = float(geom.get("fin_height", 0.0) or 0.0)
+                t_f_val = float(geom.get("fin_thickness", 0.0) or 0.0)
+                n_f_val = float(geom.get("fin_density", 0.0) or 0.0)
+                fin_blockage = n_transverse * (2.0 * h_b_val * t_f_val * n_f_val)
+                A_min = L * max(1e-6, W_estimate - n_transverse * D_o - fin_blockage)
+            else:
+                A_min = (W_estimate - n_transverse * D_o) * L
             A_min = max(A_min, 1e-6)
             v_out = m_out / (fluid_out.density * A_min)
             if FLUIDS_AVAILABLE:
@@ -1264,7 +1384,15 @@ class FinTubeHeatExchanger:
                 try:
                     h_id_nu = 0.36 * Re_o**0.55 * Pr_o ** (1.0 / 3.0)
                     h_o_bd, j_factors = _bell_delaware_shell_h(
-                        h_id_nu, fluid_out.k_cond, D_o, D_shell, self.baffle_cut, int(N), L, baffle_spacing
+                        h_id_nu,
+                        fluid_out.k_cond,
+                        D_o,
+                        D_shell,
+                        self.baffle_cut,
+                        int(N),
+                        L,
+                        baffle_spacing,
+                        Re_shell=Re_o,
                     )
                     h_o = h_o_bd
                     warnings.append(
@@ -1338,6 +1466,15 @@ class FinTubeHeatExchanger:
             h_o = (Nu_o * fluid_out.k_cond) / D_h_annulus
             eta_fin = 1.0
 
+        # İki-fazlı mod: dış tarafta faz değişimi kontrolü
+        is_two_phase_out = bool(geom.get("is_two_phase_shell", False)) or (
+            not hot_is_tube and getattr(self.hot_fluid, "h_fg", None) and not self.hot_fluid.single_phase
+        )
+        h_tp_out = float(geom.get("h_two_phase_shell", 0.0) or geom.get("h_tp_shell", 0.0) or 0.0)
+        if is_two_phase_out:
+            h_o = h_tp_out if h_tp_out > 0 else 3500.0
+            warnings.append(f"Dış taraf iki-fazlı mod: h_o = {h_o:.0f} W/m²K (faz değişimi taşınım katsayısı) uygulandı.")
+
         # --- Sieder-Tate çeper viskozite düzeltmesi (Faz B1) ---
         # h *= (mu_b / mu_w)^0.14. Çeper sıcaklığı, film dirençlerine göre ağırlıklı
         # ortalama sıcaklıkla sabit nokta iterasyonuyla tahmin edilir.
@@ -1370,13 +1507,75 @@ class FinTubeHeatExchanger:
         A_o = np.pi * D_o * L * N
 
         if self.exchanger_type == EXCHANGER_TYPE_FINNED and geom.get("is_finned", False):
-            A_fin_ratio = 1.0 + (2 * geom["fin_height"] * geom["fin_density"])
-            A_total_out = A_o * A_fin_ratio
+            fin_h = geom["fin_height"]
+            fin_t = geom["fin_thickness"]
+            fin_dens = geom["fin_density"]
+            fin_type = geom.get("fin_type", "annular")
+            N_fins_per_tube = fin_dens * L
+
+            if fin_type == "plate" and geom.get("pitch") and geom.get("pitch_parallel"):
+                p_t = geom["pitch"]
+                p_l = geom["pitch_parallel"]
+                A_fin_cell = max(0.0, 2.0 * (p_t * p_l - (np.pi * D_o**2) / 4.0))
+                A_fin_total = N * N_fins_per_tube * A_fin_cell
+            else:
+                # Dairesel kanat (annular fin): 2 yüzey + uç alanı
+                D_fin = D_o + 2.0 * fin_h
+                A_fin_single = 2.0 * np.pi * fin_h * (D_o + fin_h) + np.pi * D_fin * fin_t
+                A_fin_total = N * N_fins_per_tube * A_fin_single
+
+            fraction_bare = max(0.0, 1.0 - fin_dens * fin_t)
+            A_bare_total = A_o * fraction_bare
+            A_total_out = A_bare_total + A_fin_total
+
+            # Genel yüzey verimi (Overall surface efficiency): eta_o * A_total = A_bare + eta_fin * A_fin
+            eta_o = (A_bare_total + eta_fin * A_fin_total) / max(A_total_out, 1e-12)
+            eta_o = max(0.01, min(1.0, float(eta_o)))
         else:
             A_total_out = A_o
+            eta_o = 1.0
+            A_bare_total = A_o
+            A_fin_total = 0.0
+
+        R_contact_total = 0.0
+        if self.exchanger_type == EXCHANGER_TYPE_FINNED and geom.get("is_finned", False):
+            fin_style = (
+                geom.get("ache_fin_type")
+                or geom.get("fin_style")
+                or geom.get("fin_attachment")
+                or geom.get("api661_fin_type")
+            )
+            matched_key = None
+            if fin_style:
+                fin_style_str = str(fin_style).strip()
+                if fin_style_str in API661_FIN_TYPES:
+                    matched_key = fin_style_str
+                else:
+                    for k in API661_FIN_TYPES:
+                        if (
+                            fin_style_str.lower() in k.lower()
+                            or k.lower().startswith(fin_style_str.lower())
+                            or fin_style_str.lower().split()[0] == k.lower().split()[0]
+                        ):
+                            matched_key = k
+                            break
+            if matched_key:
+                fin_info = API661_FIN_TYPES[matched_key]
+                limit_t = fin_info["max_temp_c"]
+                r_c = fin_info["contact_resistance"]
+                R_contact_total = r_c / max(A_total_out, 1e-12)
+
+                T_eval = fluid_in.calc_temp_c if hot_is_tube else fluid_out.calc_temp_c
+                if T_eval is not None and T_eval > limit_t:
+                    _append_unique(
+                        warnings,
+                        f"API 661 Uyarısı: '{matched_key}' kanat için izin verilen sürekli çalışma sıcaklığı "
+                        f"{limit_t:.0f} °C'dir. Proses sıcaklığı ({T_eval:.1f} °C) sınırı aşıyor; "
+                        "mekanik gevşeme ve ısıl temas kaybı riski!",
+                    )
 
         R_i = 1.0 / (h_i * A_i)
-        R_o = 1.0 / (h_o * A_total_out * eta_fin)
+        R_o = 1.0 / (h_o * A_total_out * eta_o) + R_contact_total
         R_f_i_total = R_f_i / A_i if R_f_i > 0 else 0.0
         R_f_o_total = R_f_o / A_total_out if R_f_o > 0 else 0.0
 
@@ -1390,12 +1589,13 @@ class FinTubeHeatExchanger:
         delta_p_shell = 0.0
 
         try:
-            # Tube-side pressure drop
+            # Tube-side pressure drop (akış boyu L * tube_passes)
             if FLUIDS_AVAILABLE:
                 f_i = fluids.friction_factor(Re=Re_i, eD=TUBE_WALL_ROUGHNESS / D_i)
             else:
                 f_i = (0.79 * np.log(max(Re_i, 2300)) - 1.64) ** -2 if Re_i >= 2300 else 64.0 / max(Re_i, 1)
-            delta_p_tube = f_i * (L / D_i) * (fluid_in.density * v_in**2 / 2.0)
+            L_flow_tube = L * max(1, self.tube_passes)
+            delta_p_tube = f_i * (L_flow_tube / D_i) * (fluid_in.density * v_in**2 / 2.0)
             if Re_i < 2300:
                 delta_p_tube *= 1.1  # approximate laminar correction for developing flow
             # Çok geçişli dönüş kafaları + nozul lokal kayıpları (Faz 2.2)
@@ -1485,6 +1685,8 @@ class FinTubeHeatExchanger:
         return {
             "U": self.U,
             "A_total": self.A,
+            "A_bare_total": A_bare_total,
+            "A_fin_total": A_fin_total,
             "h_i": h_i,
             "h_o": h_o,
             "Re_i": Re_i,
@@ -1495,6 +1697,7 @@ class FinTubeHeatExchanger:
             "R_f_i_total": R_f_i_total,
             "R_f_o_total": R_f_o_total,
             "eta_fin": eta_fin,
+            "eta_o": eta_o,
             "delta_p_tube": delta_p_tube,
             "delta_p_shell": delta_p_shell,
             "pump_power_tube": pump_power_tube,

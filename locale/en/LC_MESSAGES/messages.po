@@ -1,4 +1,4 @@
-# Turkish (tr) translations for Heat Exchanger Calc
+# English (en) translations for Heat Exchanger Calc
 # Copyright (C) 2026
 # This file is distributed under the same license as the project.
 msgid ""
@@ -6,73 +6,73 @@ msgstr ""
 "Project-Id-Version: heat-exchanger-calc 0.4.0\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-09-10\n"
-"Language: tr\n"
+"Language: en\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
 msgid "ISI DEGISTIRICI DETAYLI HESAP RAPORU"
-msgstr "ISI DEGISTIRICI DETAYLI HESAP RAPORU"
+msgstr "DETAILED HEAT EXCHANGER CALCULATION REPORT"
 
 msgid "Isı Değiştirici Hesap Raporu"
-msgstr "Isı Değiştirici Hesap Raporu"
+msgstr "Heat Exchanger Calculation Report"
 
 msgid "ISI DEGISTIRICI DETAYLI HESAP ARACI"
-msgstr "ISI DEGISTIRICI DETAYLI HESAP ARACI"
+msgstr "HEAT EXCHANGER DETAILED DESIGN TOOL"
 
 msgid "1. Secilen Yontemler"
-msgstr "1. Seçilen Yöntemler"
+msgstr "1. Selected Methods"
 
 msgid "2. Kullanici Girdileri"
-msgstr "2. Kullanıcı Girdileri"
+msgstr "2. User Inputs"
 
 msgid "3. Akiskan Ozellikleri"
-msgstr "3. Akışkan Özellikleri"
+msgstr "3. Fluid Properties"
 
 msgid "4. Geometri ve U/A Bilgileri"
-msgstr "4. Geometri ve U/A Bilgileri"
+msgstr "4. Geometry and U/A Details"
 
 msgid "5. Kullanilan Formuller"
-msgstr "5. Kullanılan Formüller"
+msgstr "5. Governing Equations"
 
 msgid "6. Ara Hesaplar"
-msgstr "6. Ara Hesaplar"
+msgstr "6. Intermediate Calculations"
 
 msgid "7. Secilen Cozucunun Sonucu"
-msgstr "7. Seçilen Çözücünün Sonucu"
+msgstr "7. Selected Solver Result"
 
 msgid "8. Performans Degerlendirmesi"
-msgstr "8. Performans Değerlendirmesi"
+msgstr "8. Performance Evaluation"
 
 msgid "9. Cross-Check / Bagimsiz Dogrulama"
-msgstr "9. Cross-Check / Bağımsız Doğrulama"
+msgstr "9. Cross-Check / Independent Verification"
 
 msgid "10. Uyarilar ve Gecerlik Notlari"
-msgstr "10. Uyarılar ve Geçerlik Notları"
+msgstr "10. Warnings and Validity Notes"
 
 msgid "10b. Mekanik Tasarim (ASME / API 661)"
-msgstr "10b. Mekanik Tasarım (ASME / API 661)"
+msgstr "10b. Mechanical Design (ASME / API 661)"
 
 msgid "11. Cozum Akisi"
-msgstr "11. Çözüm Akışı"
+msgstr "11. Solution Flow"
 
 msgid "Sıcak akışkan debisi"
-msgstr "Sıcak akışkan debisi"
+msgstr "Hot fluid mass flow rate"
 
 msgid "Soğuk akışkan debisi"
-msgstr "Soğuk akışkan debisi"
+msgstr "Cold fluid mass flow rate"
 
 msgid "Giriş sıcaklıkları sonlu olmalıdır."
-msgstr "Giriş sıcaklıkları sonlu olmalıdır."
+msgstr "Inlet temperatures must be finite."
 
 msgid "Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır."
-msgstr "Sıcak akışkan giriş sıcaklığı soğuk akışkan giriş sıcaklığından büyük olmalıdır."
+msgstr "Hot fluid inlet temperature must be greater than cold fluid inlet temperature."
 
 msgid "Hesaplanan effectiveness fiziksel aralık dışında"
-msgstr "Hesaplanan effectiveness fiziksel aralık dışında"
+msgstr "Calculated effectiveness outside physical range"
 
 msgid "Enerji dengesi sapması"
-msgstr "Enerji dengesi sapması"
+msgstr "Energy balance deviation"
 
 msgid "Heat Exchanger"
-msgstr "Isı Değiştirici"
+msgstr "Heat Exchanger"

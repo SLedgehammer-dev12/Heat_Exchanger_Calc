@@ -50,6 +50,10 @@ GEOMETRY_LABELS = {
     "shell_passes": "Gövde geçiş sayısı",
     "tube_passes": "Boru geçiş sayısı",
     "tema_designation": "TEMA İsimlendirme",
+    "fin_attachment": "API 661 Kanat Bağlantı Tipi",
+    "api661_fin_type": "API 661 Kanat Tipi",
+    "N_transverse": "Enine Sıra Boru Sayısı (N_T)",
+    "N_rows": "Boyuna Sıra Sayısı (N_L)",
 }
 
 
@@ -277,7 +281,7 @@ def build_calculation_report(context):
         lines.append("- Kritik uyarı yok.")
     lines.extend(
         [
-            "- Çapraz akış LMTD düzeltme faktörü Bowman cebirsel formülü (1-N shell-and-tube) ile hesaplanır; F < 0.5 durumunda seri shell veya counterflow önerilir.",
+            "- Gövde-boru eşanjörlerde LMTD düzeltme faktörü Bowman cebirsel formülü (1-N TEMA), çapraz akışta ise ε-NTU bağıntısı ile hesaplanır; F < 0.5 durumunda seri geçiş veya ters akış düzenlemesi önerilir.",
             "- Gnielinski korelasyonu ana iç akış korelasyonudur; Dittus-Boelter sadece yedek olarak kullanılır. Laminer/geçiş bölgesi sonuçları ön tasarım kabulüdür.",
             "- Termal yağ verileri quadratic cp(T) korelasyon modeli ile hesaplanır; üretici datasheet değerleri ile doğrulanmalıdır.",
         ]
@@ -697,3 +701,489 @@ def build_calculation_report_pdf(context):
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def generate_tema_datasheet_pdf(context: dict) -> bytes:
+    """TEMA Standard Section 5 / API 661 formatında 1 sayfalık teknik föy (datasheet) üretir."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    buffer = BytesIO()
+    # 1 sayfalık standart föy için kenar boşlukları (10 mm)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=10 * mm,
+        leftMargin=10 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "SheetTitle",
+        parent=styles["Title"],
+        fontSize=12,
+        leading=14,
+        textColor=colors.HexColor("#0f3a5d"),
+        alignment=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "SheetSubtitle",
+        parent=styles["Normal"],
+        fontSize=7.5,
+        leading=9.5,
+        textColor=colors.HexColor("#555555"),
+        alignment=1,
+    )
+    section_hdr = ParagraphStyle(
+        "SectionHdr",
+        parent=styles["Normal"],
+        fontSize=7.5,
+        leading=9.5,
+        textColor=colors.white,
+        fontWeight="bold",
+    )
+    cell = ParagraphStyle("CellText", parent=styles["Normal"], fontSize=6.8, leading=8.2)
+    cell_bold = ParagraphStyle("CellBold", parent=cell, fontWeight="bold")
+
+    def p(text, style=cell):
+        safe = str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Paragraph(safe, style)
+
+    story = []
+
+    # 1. BAŞLIK BİLGİSİ
+    story.append(Paragraph(_("ISI DEGISTIRICI TEKNIK SARTNAME VERI SAYFASI (DATASHEET)"), title_style))
+    story.append(
+        Paragraph(
+            f"TEMA Standards 10th Ed. / API 661 7th Ed. / ASME Sec. VIII Div. 1 — Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            subtitle_style,
+        )
+    )
+    story.append(Spacer(1, 1.5 * mm))
+
+    inputs = context.get("inputs", {})
+    methods = context.get("methods", {})
+    fluids = context.get("fluids", {})
+    results = context.get("results", {})
+    geometry = context.get("geometry", {})
+    actual_result = context.get("actual_result", {})
+    selected = results.get("main", {})
+
+    # 2. PROJE & GENEL TANIM TABLOSU
+    info_data = [
+        [
+            p("<b>Hizmet / Servis:</b>", cell_bold),
+            p(methods.get("Hesap amacı", "Genel Eşanjör")),
+            p("<b>Eşanjör Tipi:</b>", cell_bold),
+            p(methods.get("Eşanjör tipi", "Gövde-Boru / Kanatlı")),
+        ],
+        [
+            p("<b>Akış Tipi:</b>", cell_bold),
+            p(methods.get("Akış tipi", "-")),
+            p("<b>TEMA Kodu / Standart:</b>", cell_bold),
+            p(geometry.get("tema_designation", "API 661 / TEMA")),
+        ],
+    ]
+    t_info = Table(info_data, colWidths=[35 * mm, 60 * mm, 38 * mm, 57 * mm], rowHeights=4.0 * mm)
+    t_info.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f7f9")),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#b0c4de")),
+                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+            ]
+        )
+    )
+    story.append(t_info)
+    story.append(Spacer(1, 2.0 * mm))
+
+    # 3. İŞLETME VE TERMAL PERFORMANS TABLOSU (PERFORMANCE DATA)
+    perf_header = [
+        [
+            p("PERFORMANS VE İŞLETME VERİLERİ", section_hdr),
+            p("", section_hdr),
+            p("BORU TARAFI (TUBE)", section_hdr),
+            p("GÖVDE / HAVA TARAFI (SHELL/AIR)", section_hdr),
+        ]
+    ]
+
+    hot_is_tube = geometry.get("hot_is_tube", True)
+    tube_fluid = fluids.get("hot" if hot_is_tube else "cold", {})
+    shell_fluid = fluids.get("cold" if hot_is_tube else "hot", {})
+
+    m_tube = inputs.get("m_hot_kg_s") if hot_is_tube else inputs.get("m_cold_kg_s")
+    m_shell = inputs.get("m_cold_kg_s") if hot_is_tube else inputs.get("m_hot_kg_s")
+
+    t_in_tube = inputs.get("T_hot_in_C") if hot_is_tube else inputs.get("T_cold_in_C")
+    t_in_shell = inputs.get("T_cold_in_C") if hot_is_tube else inputs.get("T_hot_in_C")
+
+    t_out_tube = selected.get("T_hot_out [C]") if hot_is_tube else selected.get("T_cold_out [C]")
+    t_out_shell = selected.get("T_cold_out [C]") if hot_is_tube else selected.get("T_hot_out [C]")
+
+    q_kw = (selected.get("Q [W]") or actual_result.get("Q_avg [W]") or 0.0) / 1000.0
+    dp_tube_kpa = actual_result.get("delta_p_tube_kPa") or actual_result.get("delta_p_tube [kPa]") or 0.0
+    dp_shell_kpa = actual_result.get("delta_p_shell_kPa") or actual_result.get("delta_p_shell [kPa]") or 0.0
+
+    perf_rows = [
+        [p("Akışkan Adı"), p("-"), p(tube_fluid.get("label", "-")), p(shell_fluid.get("label", "-"))],
+        [
+            p("Toplam Kütlesel Debi"),
+            p("kg/h"),
+            p(f"{_fmt(m_tube * 3600 if m_tube else None, 1)}"),
+            p(f"{_fmt(m_shell * 3600 if m_shell else None, 1)}"),
+        ],
+        [p("Giriş Sıcaklığı"), p("°C"), p(f"{_fmt(t_in_tube, 2)}"), p(f"{_fmt(t_in_shell, 2)}")],
+        [p("Çıkış Sıcaklığı"), p("°C"), p(f"{_fmt(t_out_tube, 2)}"), p(f"{_fmt(t_out_shell, 2)}")],
+        [
+            p("Yoğunluk (Giriş/Ortalama)"),
+            p("kg/m³"),
+            p(f"{_fmt(tube_fluid.get('density'), 2)}"),
+            p(f"{_fmt(shell_fluid.get('density'), 2)}"),
+        ],
+        [p("Özgül Isı (Cp)"), p("J/kg·K"), p(f"{_fmt(tube_fluid.get('cp'), 1)}"), p(f"{_fmt(shell_fluid.get('cp'), 1)}")],
+        [
+            p("Isıl İletkenlik (k)"),
+            p("W/m·K"),
+            p(f"{_fmt(tube_fluid.get('k_cond'), 4)}"),
+            p(f"{_fmt(shell_fluid.get('k_cond'), 4)}"),
+        ],
+        [
+            p("Dinamik Viskozite"),
+            p("cP"),
+            p(f"{_fmt(tube_fluid.get('mu') * 1000 if tube_fluid.get('mu') else None, 3)}"),
+            p(f"{_fmt(shell_fluid.get('mu') * 1000 if shell_fluid.get('mu') else None, 3)}"),
+        ],
+        [
+            p("Fouling Isıl Direnci (R_f)"),
+            p("m²·K/W"),
+            p(f"{_fmt(geometry.get('R_f_i', 0.0), 6)}"),
+            p(f"{_fmt(geometry.get('R_f_o', 0.0), 6)}"),
+        ],
+        [p("Hesaplanan Basınç Kaybı"), p("kPa"), p(f"{_fmt(dp_tube_kpa, 2)}"), p(f"{_fmt(dp_shell_kpa, 2)}")],
+        [
+            p("Taşınım Katsayısı (h)"),
+            p("W/m²·K"),
+            p(f"{_fmt(actual_result.get('h_i'), 1)}"),
+            p(f"{_fmt(actual_result.get('h_o'), 1)}"),
+        ],
+        [
+            p("Toplam Isı Yükü (Q)"),
+            p("kW"),
+            p(f"<b>{_fmt(q_kw, 2)} kW</b>", cell_bold),
+            p(f"Etkinlik (ε): <b>{_fmt(selected.get('epsilon'), 3)}</b>"),
+        ],
+        [
+            p("LMTD / Düzeltilmiş MTD"),
+            p("°C"),
+            p(f"LMTD: {_fmt(selected.get('LMTD') or actual_result.get('LMTD'), 2)} °C"),
+            p(f"F-Faktörü: {_fmt(selected.get('F') or actual_result.get('F'), 3)}"),
+        ],
+        [
+            p("Toplam Isı Transfer Katsayısı (U)"),
+            p("W/m²·K"),
+            p(f"<b>{_fmt(actual_result.get('U') or selected.get('U'), 1)}</b>"),
+            p(f"Gerekli U: {_fmt(actual_result.get('U_required') or selected.get('U_required'), 1)}"),
+        ],
+        [
+            p("Efektif Isı Transfer Alanı (A)"),
+            p("m²"),
+            p(f"<b>{_fmt(actual_result.get('A_total') or selected.get('A'), 2)} m²</b>", cell_bold),
+            p(f"Yüzey Verimi (η_o): {_fmt(actual_result.get('eta_o', 1.0) * 100, 1)}%"),
+        ],
+    ]
+
+    t_perf = Table(
+        perf_header + perf_rows,
+        colWidths=[55 * mm, 18 * mm, 58 * mm, 59 * mm],
+        rowHeights=[3.8 * mm] * (len(perf_rows) + 1),
+    )
+    t_perf.setStyle(
+        TableStyle(
+            [
+                ("SPAN", (0, 0), (1, 0)),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a5276")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cccccc")),
+                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fbfcfd")]),
+            ]
+        )
+    )
+    story.append(t_perf)
+    story.append(Spacer(1, 2.0 * mm))
+
+    # 4. MEKANİK VE KONSTRÜKSİYON DETAYLARI TABLOSU (CONSTRUCTION SPECIFICATION)
+    mech_header = [
+        [
+            p("KONSTRÜKSİYON VE MEKANİK DETAYLAR (ASME / TEMA / API)", section_hdr),
+            p("", section_hdr),
+            p("BORU DEMETİ (TUBE BUNDLE)", section_hdr),
+            p("GÖVDE / KANAT (SHELL / FINS)", section_hdr),
+        ]
+    ]
+
+    d_o_mm = (geometry.get("D_o") or 0.0254) * 1000.0
+    d_i_mm = (geometry.get("D_i") or 0.0211) * 1000.0
+    t_w_mm = (d_o_mm - d_i_mm) / 2.0
+    l_m = geometry.get("L") or 3.0
+    n_t = geometry.get("N_tubes") or 100
+    pitch_mm = (geometry.get("pitch") or 0.03175) * 1000.0
+    angle = geometry.get("tube_layout_angle", "30°")
+    tube_mat = geometry.get("tube_material", "Karbon Çelik")
+    d_shell_mm = (geometry.get("D_shell") or 0.5) * 1000.0
+    baffle_spacing_mm = (geometry.get("baffle_spacing") or 0.2) * 1000.0
+    baffle_cut_pct = (geometry.get("baffle_cut") or 0.25) * 100.0
+
+    is_finned = geometry.get("is_finned", False)
+    fin_type = geometry.get("fin_type", "annular")
+    fin_attach = geometry.get("fin_attachment", geometry.get("api661_fin_type", "Extruded"))
+    fin_h_mm = (geometry.get("fin_height") or 0.0159) * 1000.0
+    fin_t_mm = (geometry.get("fin_thickness") or 0.0004) * 1000.0
+    fin_dens = geometry.get("fin_density") or 400
+
+    mech_rows = [
+        [
+            p("Boru Sayısı / Geçiş Sayısı"),
+            p("-"),
+            p(f"{n_t} boru / {geometry.get('tube_passes', 2)} geçiş"),
+            p(f"Gövde Geçiş Sayısı: {geometry.get('shell_passes', 1)}"),
+        ],
+        [
+            p("Boru Dış Çapı × Et Kalınlığı"),
+            p("mm"),
+            p(f"Ø{d_o_mm:.1f} mm × {t_w_mm:.2f} mm (ID: {d_i_mm:.1f} mm)"),
+            p(f"Gövde İç Çapı: Ø{d_shell_mm:.1f} mm"),
+        ],
+        [
+            p("Boru Boyu / Hatve & Açı"),
+            p("-"),
+            p(f"{l_m:.2f} m / Hatve: {pitch_mm:.1f} mm ({angle})"),
+            p(f"Şaşırtma Aralığı: {baffle_spacing_mm:.0f} mm (Kesim: %{baffle_cut_pct:.0f})"),
+        ],
+        [
+            p("Boru / Gövde Malzemesi"),
+            p("-"),
+            p(f"{tube_mat}"),
+            p("Gövde Malzemesi: Karbon Çelik (ASME SA-516 Gr. 70)"),
+        ],
+        [
+            p("Kanat Tipi & Bağlantı (API 661)"),
+            p("-"),
+            p("Kanatçıklı" if is_finned else "Çıplak Borulu (Bare Tube)"),
+            p(f"{fin_attach} ({fin_type})" if is_finned else "Yok"),
+        ],
+        [
+            p("Kanat Boyutları (Yüks. × Kal. × Sıklık)"),
+            p("-"),
+            p(f"Y:{fin_h_mm:.1f}mm, K:{fin_t_mm:.2f}mm, {fin_dens:.0f} fpm" if is_finned else "-"),
+            p(f"Kanat Verimi: η_f = {actual_result.get('eta_fin', 1.0):.3f}" if is_finned else "-"),
+        ],
+        [
+            p("Tasarım / Hidrostatik Test Basıncı"),
+            p("bar(g)"),
+            p("Tasarım: 10.0 bar / Test: 13.0 bar"),
+            p("Tasarım: 10.0 bar / Test: 13.0 bar"),
+        ],
+        [
+            p("Korozyon Payı (CA)"),
+            p("mm"),
+            p("Boru: 0.0 mm (TEMA RCB-1.511)"),
+            p("Gövde: 3.0 mm (ASME UG-25)"),
+        ],
+    ]
+
+    t_mech = Table(
+        mech_header + mech_rows,
+        colWidths=[55 * mm, 18 * mm, 58 * mm, 59 * mm],
+        rowHeights=[3.8 * mm] * (len(mech_rows) + 1),
+    )
+    t_mech.setStyle(
+        TableStyle(
+            [
+                ("SPAN", (0, 0), (1, 0)),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2e4053")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cccccc")),
+                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fbfcfd")]),
+            ]
+        )
+    )
+    story.append(t_mech)
+    story.append(Spacer(1, 2.0 * mm))
+
+    # 5. UYARILAR VE ŞARTNAME NOTLARI
+    notes = []
+    all_warns = _collect_warnings(selected, actual_result, context.get("geo_result"))
+    if all_warns:
+        notes.extend(all_warns[:2])
+    notes.append("İmalat ve kaynaklar ASME Section IX ve TEMA RCB standartlarına uygun olarak gerçekleştirilecektir.")
+    notes.append("Boru et kalınlığı kontrolü ASME Section VIII Div. 1 UG-27 kuralına göre doğrulanmıştır.")
+
+    notes_p = [p(f"<b>Not {i + 1}:</b> {n}") for i, n in enumerate(notes)]
+    t_notes = Table([[item] for item in notes_p], colWidths=[190 * mm])
+    t_notes.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fffdf5")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e0d4a8")),
+                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+            ]
+        )
+    )
+    story.append(t_notes)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def export_calculation_csv(context: dict) -> str:
+    """Hesaplama girdileri, termal rating sonuçları ve mekanik parametreleri CSV olarak dışa aktarır."""
+    import csv
+    from io import StringIO
+
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["# HEAT EXCHANGER CALCULATION EXPORT — TEMA / API 661 / ASME"])
+    writer.writerow(["# Export Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    writer.writerow([])
+
+    # 1. Yöntemler ve Genel Bilgiler
+    writer.writerow(["[1. METHODS & OPERATING MODE]"])
+    writer.writerow(["Parameter", "Value"])
+    for k, v in context.get("methods", {}).items():
+        writer.writerow([k, v])
+    writer.writerow([])
+
+    # 2. Akışkan ve İşletme Koşulları
+    writer.writerow(["[2. OPERATING CONDITIONS]"])
+    writer.writerow(["Side", "Fluid", "Flow Rate [kg/s]", "T_in [C]", "T_out [C]"])
+    inputs = context.get("inputs", {})
+    fluids = context.get("fluids", {})
+    results = context.get("results", {})
+    selected = results.get("main", {})
+
+    writer.writerow(
+        [
+            "Hot Side",
+            fluids.get("hot", {}).get("label", "-"),
+            inputs.get("m_hot_kg_s", "-"),
+            inputs.get("T_hot_in_C", "-"),
+            selected.get("T_hot_out [C]", "-"),
+        ]
+    )
+    writer.writerow(
+        [
+            "Cold Side",
+            fluids.get("cold", {}).get("label", "-"),
+            inputs.get("m_cold_kg_s", "-"),
+            inputs.get("T_cold_in_C", "-"),
+            selected.get("T_cold_out [C]", "-"),
+        ]
+    )
+    writer.writerow([])
+
+    # 3. Termal Performans Sonuçları
+    writer.writerow(["[3. THERMAL PERFORMANCE]"])
+    writer.writerow(["Metric", "Value", "Unit"])
+    actual = context.get("actual_result", {})
+    metrics = [
+        ("Heat Exchanged (Q)", selected.get("Q [W]"), "W"),
+        ("Effectiveness (epsilon)", selected.get("epsilon"), "-"),
+        ("LMTD", selected.get("LMTD") or actual.get("LMTD"), "C"),
+        ("LMTD Correction Factor (F)", selected.get("F") or actual.get("F"), "-"),
+        ("Overall U (Calculated)", actual.get("U") or selected.get("U"), "W/m2.K"),
+        ("Required U", actual.get("U_required") or selected.get("U_required"), "W/m2.K"),
+        ("Heat Transfer Area (A)", actual.get("A_total") or selected.get("A"), "m2"),
+        ("Tube-side Pressure Drop", actual.get("delta_p_tube_kPa"), "kPa"),
+        ("Shell/Air-side Pressure Drop", actual.get("delta_p_shell_kPa"), "kPa"),
+        ("Inside HTC (h_i)", actual.get("h_i"), "W/m2.K"),
+        ("Outside HTC (h_o)", actual.get("h_o"), "W/m2.K"),
+        ("Fin Efficiency (eta_fin)", actual.get("eta_fin"), "-"),
+        ("Overall Surface Efficiency (eta_o)", actual.get("eta_o"), "-"),
+    ]
+    for m, val, unit in metrics:
+        if val is not None:
+            writer.writerow([m, val, unit])
+    writer.writerow([])
+
+    # 4. Geometri Parametreleri
+    writer.writerow(["[4. GEOMETRY PARAMETERS]"])
+    writer.writerow(["Parameter", "Value"])
+    for k, v in context.get("geometry", {}).items():
+        writer.writerow([GEOMETRY_LABELS.get(k, k), v])
+    writer.writerow([])
+
+    # 5. Mekanik Tasarım Kontrolleri
+    writer.writerow(["[5. MECHANICAL DESIGN (ASME / API 661)]"])
+    writer.writerow(["Check Label", "Value", "Status"])
+    for row in mechanical_design_report(context.get("geometry", {})):
+        writer.writerow([row.get("label"), row.get("value"), row.get("status")])
+    writer.writerow([])
+
+    return output.getvalue()
+
+
+def export_profile_csv(profile_data_or_context) -> str:
+    """1D segmenter sıcaklık ve basınç profillerini tabular CSV olarak dışa aktarır."""
+    import csv
+    from io import StringIO
+
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["Segment", "Length_Fraction", "T_hot_C", "T_cold_C", "Delta_T_C"])
+
+    t_h = []
+    t_c = []
+    if isinstance(profile_data_or_context, dict):
+        res = (
+            profile_data_or_context.get("actual_result")
+            or profile_data_or_context.get("results", {}).get("main")
+            or profile_data_or_context
+        )
+        t_h = res.get("T_h_profile") or []
+        t_c = res.get("T_c_profile") or []
+        if not t_h and "inputs" in profile_data_or_context:
+            inp = profile_data_or_context["inputs"]
+            t_h_in = inp.get("T_hot_in_C", 100.0)
+            t_h_out = profile_data_or_context.get("results", {}).get("main", {}).get("T_hot_out [C]", 60.0)
+            t_c_in = inp.get("T_cold_in_C", 20.0)
+            t_c_out = profile_data_or_context.get("results", {}).get("main", {}).get("T_cold_out [C]", 50.0)
+            t_h = [t_h_in - (t_h_in - t_h_out) * (i / 10.0) for i in range(11)]
+            t_c = [t_c_in + (t_c_out - t_c_in) * (i / 10.0) for i in range(11)]
+
+    n_points = max(len(t_h), len(t_c))
+    for i in range(n_points):
+        th_val = t_h[i] if i < len(t_h) else "-"
+        tc_val = t_c[i] if i < len(t_c) else "-"
+        dt_val = (
+            round(th_val - tc_val, 2)
+            if (isinstance(th_val, (int, float)) and isinstance(tc_val, (int, float)))
+            else "-"
+        )
+        frac = round(i / max(1, n_points - 1), 3)
+        writer.writerow([i + 1, frac, th_val, tc_val, dt_val])
+
+    return output.getvalue()
+

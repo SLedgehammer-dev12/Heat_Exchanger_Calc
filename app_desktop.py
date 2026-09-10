@@ -35,7 +35,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config import EXCHANGER_ALLOWED_FLOWS, TEMA_DESIGNATIONS
+from app_shared import (
+    EXCHANGER_INTERNAL_TO_LABEL,
+    EXCHANGER_LABEL_TO_INTERNAL,
+    FLOW_INTERNAL_TO_LABEL,
+    FLOW_LABEL_TO_INTERNAL,
+    LOAD_KEY_ALIASES,
+)
+from config import EXCHANGER_ALLOWED_FLOWS, TEMA_DESIGNATIONS, TUBE_MATERIALS
 from engineering_utils import (
     fluid_report_data,
     to_celsius,
@@ -46,8 +53,13 @@ from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_dat
 from heat_exchanger import FinTubeHeatExchanger, Fluid
 from i18n import _, set_language
 from logging_config import setup_logging
-from reporting import build_calculation_report, build_calculation_report_pdf
-from standards import fouling_preset_options, tube_preset_options
+from reporting import (
+    build_calculation_report,
+    build_calculation_report_pdf,
+    export_calculation_csv,
+    generate_tema_datasheet_pdf,
+)
+from standards import ache_fin_names, fouling_preset_options, tube_preset_options
 from updater import check_for_update, default_download_dir, download_release_asset
 from version import APP_NAME, VERSION
 
@@ -464,45 +476,6 @@ class CompositionDialog(QDialog):
         return "mass" if "Kütlesel" in self.combo_basis.currentText() else "mole"
 
 
-FLOW_LABEL_TO_INTERNAL = {
-    "Çapraz Akış (Cross Flow Unmixed)": "cross_unmixed",
-    "Ters Akış (Counter Flow)": "counter",
-    "Paralel Akış (Parallel Flow)": "parallel",
-}
-FLOW_LABEL_TO_INTERNAL["Çapraz Akış (Mixed/Unmixed)"] = "cross_mixed_unmixed"
-FLOW_INTERNAL_TO_LABEL = {value: key for key, value in FLOW_LABEL_TO_INTERNAL.items()}
-
-EXCHANGER_LABEL_TO_INTERNAL = {
-    "Kanatçıklı Boru (Finned Tube)": "finned_tube",
-    "Gövde-Boru (Shell & Tube)": "shell_and_tube",
-    "Çift Borulu (Double Pipe)": "double_pipe",
-}
-EXCHANGER_INTERNAL_TO_LABEL = {value: key for key, value in EXCHANGER_LABEL_TO_INTERNAL.items()}
-
-LOAD_KEY_ALIASES = {
-    "calc_purpose": "purpose",
-    "u_calc_mode": "u_mode",
-    "hot_fluid_sel": "hot_fluid",
-    "cold_fluid_sel": "cold_fluid",
-    "T_hot_in": "t_hot_in",
-    "T_cold_in": "t_cold_in",
-    "T_hot_out_opt": "t_hot_out_opt",
-    "T_cold_out_opt": "t_cold_out_opt",
-    "U_value": "U",
-    "Area": "A",
-    "D_o_mm": "Do",
-    "D_i_mm": "Di",
-    "L_m": "L",
-    "N_tubes": "Nt",
-    "hot_is_tube": "hot_tube",
-    "tube_material": "tube_mat",
-    "fin_material": "fin_mat",
-    "fin_h_mm": "fin_h",
-    "fin_t_mm": "fin_t",
-    "fin_density": "fin_dens",
-}
-
-
 def normalize_loaded_data(data):
     normalized = dict(data)
     for new_key, old_key in LOAD_KEY_ALIASES.items():
@@ -866,7 +839,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_tema.addItems(list(TEMA_DESIGNATIONS.keys()))
 
         self.combo_tube_mat = QComboBox()
-        self.tube_mats = {"Karbon Çelik": 45.0, "Paslanmaz Çelik 316": 16.0, "Bakır": 400.0, "Alüminyum": 237.0}
+        self.tube_mats = dict(TUBE_MATERIALS)
         self.combo_tube_mat.addItems(list(self.tube_mats.keys()))
 
         self.combo_hot_tube = QComboBox()
@@ -891,6 +864,8 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.combo_fin_mat.addItems(["Alüminyum (k=237)", "Karbon Çelik (k=45)"])
         self.combo_fin_type = QComboBox()
         self.combo_fin_type.addItems(["Dairesel (Annular)", "Düz (Rectangular)"])
+        self.combo_fin_attachment = QComboBox()
+        self.combo_fin_attachment.addItems(ache_fin_names())
         self.chk_finned.toggled.connect(self.toggle_finned)
 
         self.combo_bwg_preset = QComboBox()
@@ -929,6 +904,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         form_geo.addRow(" Fin Yoğunluğu:", self.spin_fin_dens)
         form_geo.addRow(" Fin Malzemesi:", self.combo_fin_mat)
         form_geo.addRow(" Fin Tipi:", self.combo_fin_type)
+        form_geo.addRow(" API 661 Kanat Tipi:", self.combo_fin_attachment)
 
         self.stack_geom.addWidget(page_geo)
 
@@ -975,13 +951,29 @@ class HeatExchangerDesktopApp(QMainWindow):
             lbl.setStyleSheet("color: #2c3e50; padding: 5px;")
             res_layout.addWidget(lbl)
 
-        self.btn_export_report = QPushButton("📄 Sonuç Raporunu Dışa Aktar")
+        self.btn_export_report = QPushButton("📄 Sonuç Raporu (PDF / TXT)")
         self.btn_export_report.setStyleSheet(
-            "background-color: #e67e22; color: white; padding: 10px; font-weight: bold;"
+            "background-color: #e67e22; color: white; padding: 8px; font-weight: bold;"
         )
         self.btn_export_report.clicked.connect(self.export_report)
         res_layout.addWidget(self.btn_export_report)
-        self.btn_export_report.hide()  # Hesaplama yapılana kadar gizli
+        self.btn_export_report.hide()
+
+        self.btn_export_datasheet = QPushButton("📑 TEMA / API 661 Datasheet (1 Sayfa PDF)")
+        self.btn_export_datasheet.setStyleSheet(
+            "background-color: #1a5276; color: white; padding: 8px; font-weight: bold;"
+        )
+        self.btn_export_datasheet.clicked.connect(self.export_datasheet)
+        res_layout.addWidget(self.btn_export_datasheet)
+        self.btn_export_datasheet.hide()
+
+        self.btn_export_csv = QPushButton("📊 Excel / CSV Tablo Dışa Aktar")
+        self.btn_export_csv.setStyleSheet(
+            "background-color: #27ae60; color: white; padding: 8px; font-weight: bold;"
+        )
+        self.btn_export_csv.clicked.connect(self.export_csv)
+        res_layout.addWidget(self.btn_export_csv)
+        self.btn_export_csv.hide()
 
         # Grafik için Figure ve Canvas (Sonuçlar sekmesinin en altına)
         self.figure = plt.figure(figsize=(6, 4))
@@ -1066,12 +1058,22 @@ class HeatExchangerDesktopApp(QMainWindow):
             self,
             "Raporu Kaydet",
             "isi_degistirici_raporu.pdf",
-            "PDF Files (*.pdf);;Text Files (*.txt);;All Files (*)",
+            "PDF Files (*.pdf);;TEMA Datasheet PDF (*.pdf);;CSV Tablo (*.csv);;Text Files (*.txt);;All Files (*)",
             options=options,
         )
         if fileName:
             try:
-                if selected_filter.startswith("PDF") or fileName.lower().endswith(".pdf"):
+                if selected_filter.startswith("CSV") or fileName.lower().endswith(".csv"):
+                    if not fileName.lower().endswith(".csv"):
+                        fileName += ".csv"
+                    with open(fileName, "w", encoding="utf-8") as f:
+                        f.write(export_calculation_csv(self.last_report_context))
+                elif "TEMA" in selected_filter or "datasheet" in fileName.lower():
+                    if not fileName.lower().endswith(".pdf"):
+                        fileName += ".pdf"
+                    with open(fileName, "wb") as f:
+                        f.write(generate_tema_datasheet_pdf(self.last_report_context))
+                elif selected_filter.startswith("PDF") or fileName.lower().endswith(".pdf"):
                     if not fileName.lower().endswith(".pdf"):
                         fileName += ".pdf"
                     self._attach_report_images()
@@ -1084,6 +1086,50 @@ class HeatExchangerDesktopApp(QMainWindow):
                         f.write(build_calculation_report(self.last_report_context))
 
                 QMessageBox.information(self, "Başarılı", "Rapor başarıyla kaydedildi!")
+            except Exception as e:
+                self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
+
+    def export_datasheet(self):
+        if not hasattr(self, "last_report_context"):
+            QMessageBox.warning(self, "Hata", "Önce hesaplama yapmalısınız!")
+            return
+        options = QFileDialog.Options()
+        fileName, _ = QFileDialog.getSaveFileName(
+            self,
+            "TEMA / API 661 Datasheet Kaydet",
+            "tema_api661_datasheet.pdf",
+            "PDF Files (*.pdf);;All Files (*)",
+            options=options,
+        )
+        if fileName:
+            if not fileName.lower().endswith(".pdf"):
+                fileName += ".pdf"
+            try:
+                with open(fileName, "wb") as f:
+                    f.write(generate_tema_datasheet_pdf(self.last_report_context))
+                QMessageBox.information(self, "Başarılı", "TEMA/API 661 Datasheet başarıyla kaydedildi!")
+            except Exception as e:
+                self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
+
+    def export_csv(self):
+        if not hasattr(self, "last_report_context"):
+            QMessageBox.warning(self, "Hata", "Önce hesaplama yapmalısınız!")
+            return
+        options = QFileDialog.Options()
+        fileName, _ = QFileDialog.getSaveFileName(
+            self,
+            "Hesaplama Verilerini CSV Olarak Kaydet",
+            "hesaplama_verileri.csv",
+            "CSV Files (*.csv);;All Files (*)",
+            options=options,
+        )
+        if fileName:
+            if not fileName.lower().endswith(".csv"):
+                fileName += ".csv"
+            try:
+                with open(fileName, "w", encoding="utf-8") as f:
+                    f.write(export_calculation_csv(self.last_report_context))
+                QMessageBox.information(self, "Başarılı", "CSV tablosu başarıyla kaydedildi!")
             except Exception as e:
                 self.show_error("Hata", f"Kaydetme hatası: {str(e)}", e)
 
@@ -1218,7 +1264,14 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.set_manual_property_controls("cold", self.is_custom_manual(text))
 
     def toggle_finned(self, checked):
-        for widget in (self.spin_fin_h, self.spin_fin_t, self.spin_fin_dens, self.combo_fin_mat, self.combo_fin_type):
+        for widget in (
+            self.spin_fin_h,
+            self.spin_fin_t,
+            self.spin_fin_dens,
+            self.combo_fin_mat,
+            self.combo_fin_type,
+            self.combo_fin_attachment,
+        ):
             widget.setVisible(checked)
 
     def on_bwg_preset_changed(self):
@@ -1385,6 +1438,7 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_dens": self.spin_fin_dens.value(),
                 "fin_mat": self.combo_fin_mat.currentText(),
                 "fin_type": self.combo_fin_type.currentText(),
+                "fin_attachment": self.combo_fin_attachment.currentText(),
                 "baffle_spacing": self.spin_baffle_spacing.value(),
                 "baffle_cut": self.spin_baffle_cut.value(),
                 "tube_layout_angle": self.combo_layout_angle.currentText(),
@@ -1452,6 +1506,10 @@ class HeatExchangerDesktopApp(QMainWindow):
                 self.spin_fin_dens.setValue(data.get("fin_dens", 400.0))
                 self.combo_fin_mat.setCurrentText(data.get("fin_mat", "Alüminyum (k=237)"))
                 self.combo_fin_type.setCurrentText(data.get("fin_type", "Dairesel (Annular)"))
+                if "fin_attachment" in data:
+                    idx = self.combo_fin_attachment.findText(data["fin_attachment"])
+                    if idx >= 0:
+                        self.combo_fin_attachment.setCurrentIndex(idx)
                 self.spin_baffle_spacing.setValue(data.get("baffle_spacing", 200.0))
                 self.spin_baffle_cut.setValue(data.get("baffle_cut", 0.25))
                 self.combo_layout_angle.setCurrentText(data.get("tube_layout_angle", "30"))
@@ -1541,6 +1599,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_density": self.spin_fin_dens.value(),
                 "k_fin": 237.0 if "Alüminyum" in self.combo_fin_mat.currentText() else 45.0,
                 "fin_type": "rectangular" if "Rectangular" in self.combo_fin_type.currentText() else "annular",
+                "fin_attachment": self.combo_fin_attachment.currentText(),
+                "api661_fin_type": self.combo_fin_attachment.currentText(),
                 "pitch": self.spin_do.value() * 2 / 1000.0,
                 "pitch_parallel": self.spin_do.value() * 2 / 1000.0,
                 "tube_layout_angle": self.combo_layout_angle.currentText(),
@@ -1585,6 +1645,8 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.last_crosscheck_results = crosscheck_results
         self.last_report_context = payload["report_context"]
         self.btn_export_report.show()
+        self.btn_export_datasheet.show()
+        self.btn_export_csv.show()
 
         if geo_res:
             geo_warnings = "\n".join(geo_res.get("warnings", []))

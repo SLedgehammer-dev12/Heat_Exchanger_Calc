@@ -74,3 +74,54 @@ TEMA_FOULING_FACTORS: dict[str, float] = {
 
 def fouling_preset_options() -> list[tuple[str, float]]:
     return list(TEMA_FOULING_FACTORS.items())
+
+
+# API 661 / ISO 13706 Hava Soğutmalı Eşanjör (ACHE) Kanat Tipleri,
+# Sürekli Çalışma Sıcaklık Limitleri ve Tipik Temas Dirençleri [m²·K/W]
+API661_FIN_TYPES: dict[str, dict] = {
+    "L-Fin (Wrap-on)": {
+        "max_temp_c": 130.0,
+        "contact_resistance": 0.00007,
+        "description": "Boru üzerine gerilerek sarılmış L-ayaklı alüminyum kanat. Ekonomik, düşük/orta sıcaklık.",
+    },
+    "LL-Fin (Overlapped L)": {
+        "max_temp_c": 170.0,
+        "contact_resistance": 0.00005,
+        "description": "Çift binili L-ayaklı kanat; boru yüzeyini korozyona karşı tam örter.",
+    },
+    "KL-Fin (Knurled L)": {
+        "max_temp_c": 250.0,
+        "contact_resistance": 0.00003,
+        "description": "Tırtıklı boru yüzeyine sarılmış L-ayaklı kanat; yüksek titreşim ve orta sıcaklık.",
+    },
+    "G-Fin (Embedded / Gömülü)": {
+        "max_temp_c": 400.0,
+        "contact_resistance": 0.0,
+        "description": "Boru dış yüzeyine açılan yive gömülen kanat; yüksek sıcaklık ve ağır hizmet.",
+    },
+    "Extruded (Bimetalik Ekstrüzyon)": {
+        "max_temp_c": 300.0,
+        "contact_resistance": 0.0,
+        "description": "Dış alüminyum borudan haddelenerek çıkarılmış yekpare kanat; mükemmel korozyon dayanımı.",
+    },
+}
+
+
+def ache_fin_options() -> list[dict]:
+    """[(label, max_temp_c, contact_resistance)] listesi döndürür."""
+    return [
+        {
+            "name": k,
+            "max_temp_c": v["max_temp_c"],
+            "contact_resistance": v["contact_resistance"],
+            "desc": v["description"],
+        }
+        for k, v in API661_FIN_TYPES.items()
+    ]
+
+
+def ache_fin_names() -> list[str]:
+    """API 661 kanat tipi isim listesini döndürür."""
+    return list(API661_FIN_TYPES.keys())
+
+

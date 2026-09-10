@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 build/
 dist/
 release/
@@ -10,3 +12,11 @@ release/
 htmlcov/
 .coverage
 .coverage.*
+.mplconfig/
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+*.png
+heat_exchanger_save.json
+

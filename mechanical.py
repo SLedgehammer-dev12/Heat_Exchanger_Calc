@@ -20,20 +20,30 @@ class MechanicalDesignError(ValueError):
     """Mekanik tasarım hesabında geçersiz girdi."""
 
 
-def asme_wall_thickness(P: float, R: float, S: float, E: float = ASME_DEFAULT_JOINT_EFFICIENCY, CA: float = 0.0) -> float:
+def asme_wall_thickness(
+    P: float,
+    R: float,
+    S: float,
+    E: float = ASME_DEFAULT_JOINT_EFFICIENCY,
+    CA: float = 0.0,
+    use_outer_radius: bool = False,
+) -> float:
     """ASME Sec VIII Div.1 UG-27 minimum et kalınlığı [m].
 
-    t_min = P·R / (S·E − 0.6·P) + CA
+    İç yarıçap ile:
+      t_min = P·R / (S·E − 0.6·P) + CA
+    Dış yarıçap (use_outer_radius=True) ile (UG-27(c)(1)):
+      t_min = P·R_o / (S·E + 0.4·P) + CA
 
-    *P*: tasarım (iç) basıncı [Pa], *R*: iç yarıçap [m],
+    *P*: tasarım (iç) basıncı [Pa], *R*: iç veya dış yarıçap [m],
     *S*: izin verilen gerilme [Pa], *E*: kaynak/kaynaşma verimi,
     *CA*: korozyon payı [m].
     """
     if P <= 0 or R <= 0 or S <= 0 or E <= 0:
         raise MechanicalDesignError("ASME girdileri pozitif olmalıdır (P, R, S, E).")
-    denom = S * E - 0.6 * P
+    denom = S * E + 0.4 * P if use_outer_radius else S * E - 0.6 * P
     if denom <= 0:
-        raise MechanicalDesignError("ASME: S·E − 0.6·P ≤ 0; tasarım basıncı izin verilen gerilmeyi aşıyor.")
+        raise MechanicalDesignError("ASME: payda ≤ 0; tasarım basıncı izin verilen gerilmeyi aşıyor.")
     if CA < 0:
         raise MechanicalDesignError("Korozyon payı (CA) negatif olamaz.")
     return P * R / denom + CA
@@ -95,10 +105,20 @@ def mechanical_design_report(geom: dict) -> list[dict]:
             rows.append({"label": "Gövde et kalınlığı", "value": "—", "status": f"HATA: {exc}", "ok": False})
 
     if D_o > 0:
-        R_tube = (D_o / 2.0)
+        R_tube_o = D_o / 2.0
         try:
-            t_tube = asme_wall_thickness(design_pressure, R_tube, design_stress, joint_eff, ca)
-            rows.append({"label": "Boru min. et kalınlığı (ASME UG-27)", "value": f"{t_tube*1000:.2f} mm", "status": "ok", "ok": True})
+            # TEMA RCB-1.511: Borularda korozyon payı aranmaz (CA = 0.0). Boru dış çapına göre ASME formülü.
+            t_tube = asme_wall_thickness(
+                design_pressure, R_tube_o, design_stress, joint_eff, CA=0.0, use_outer_radius=True
+            )
+            rows.append(
+                {
+                    "label": "Boru min. et kalınlığı (ASME UG-27, CA=0)",
+                    "value": f"{t_tube*1000:.2f} mm",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
         except MechanicalDesignError as exc:
             rows.append({"label": "Boru et kalınlığı", "value": "—", "status": f"HATA: {exc}", "ok": False})
 

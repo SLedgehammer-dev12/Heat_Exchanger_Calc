@@ -19,11 +19,18 @@ LOG_FILE = setup_logging("web")
 logger = logging.getLogger(__name__)
 
 
-from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES, TEMA_DESIGNATIONS
+from app_shared import MIXTURE_PRESETS, safe_index
+from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES, TEMA_DESIGNATIONS, TUBE_MATERIALS
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
 from heat_exchanger import FinTubeHeatExchanger, Fluid
-from reporting import build_calculation_report, build_calculation_report_pdf
-from standards import fouling_preset_options, tube_preset_options
+from reporting import (
+    build_calculation_report,
+    build_calculation_report_pdf,
+    export_calculation_csv,
+    export_profile_csv,
+    generate_tema_datasheet_pdf,
+)
+from standards import ache_fin_names, fouling_preset_options, tube_preset_options
 from updater import check_for_update, default_download_dir, download_release_asset
 from version import APP_NAME, VERSION
 
@@ -140,11 +147,8 @@ DEFAULT_STATE = {
     "fin_density": 400,
     "fin_material": "Alüminyum (k=237)",
     "fin_type": "Dairesel (Annular)",
+    "fin_attachment": "L-Fin (Wrap-on)",
 }
-
-
-def safe_index(options, value, default=0):
-    return options.index(value) if value in options else default
 
 
 def normalize_loaded_state(data):
@@ -205,11 +209,6 @@ MIXTURE_GASES = [
     "Hydrogen",
     "SulfurDioxide",
 ]
-MIXTURE_PRESETS = {
-    "Doğal Gaz": {"Nitrogen": 76.0, "Oxygen": 11.0, "Water": 6.0, "CarbonDioxide": 7.0},
-    "Kömür": {"Nitrogen": 72.0, "Oxygen": 6.0, "Water": 6.0, "CarbonDioxide": 15.0, "SulfurDioxide": 1.0},
-    "Biyogaz": {"Nitrogen": 65.0, "Oxygen": 5.0, "Water": 15.0, "CarbonDioxide": 15.0},
-}
 
 
 def is_mixture_selection(label, fluid_data):
@@ -396,6 +395,24 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
             build_calculation_report_pdf(report_context),
             file_name="isi_degistirici_raporu.pdf",
             mime="application/pdf",
+        )
+        st.download_button(
+            "📑 TEMA / API 661 Şartname Veri Sayfası (.pdf)",
+            generate_tema_datasheet_pdf(report_context),
+            file_name="tema_api661_datasheet.pdf",
+            mime="application/pdf",
+        )
+        st.download_button(
+            "📊 Hesaplama Verileri Tablosu (.csv)",
+            export_calculation_csv(report_context),
+            file_name="hesaplama_verileri.csv",
+            mime="text/csv",
+        )
+        st.download_button(
+            "📈 1D Sıcaklık Profili Tablosu (.csv)",
+            export_profile_csv(report_context),
+            file_name="sicaklik_profili.csv",
+            mime="text/csv",
         )
 
     with tab_crosscheck:
@@ -752,16 +769,19 @@ with tab_geom:
             current_data.update({"L_m": L_m, "N_tubes": N_tubes})
 
         with g2:
-            mat_options = {
-                "Karbon Çelik (k=45)": 45.0,
-                "Paslanmaz Çelik 316 (k=16)": 16.0,
-                "Bakır (k=400)": 400.0,
-                "Alüminyum (k=237)": 237.0,
-            }
+            mat_options = {f"{k} (k={v:.1f})": v for k, v in TUBE_MATERIALS.items()}
+            # Önceki kayıtlarda k değeri formatsız olabilir, isim bazlı eşleştirme:
+            curr_mat = get_val("tube_material")
+            matched_idx = 0
+            if curr_mat:
+                for idx, opt in enumerate(mat_options.keys()):
+                    if opt == curr_mat or opt.split()[0] == curr_mat.split()[0]:
+                        matched_idx = idx
+                        break
             tube_material = st.selectbox(
                 "Boru Malzemesi",
                 options=list(mat_options.keys()),
-                index=safe_index(list(mat_options.keys()), get_val("tube_material")),
+                index=matched_idx,
             )
             geom_dict["k_wall"] = mat_options[tube_material]
             current_data["tube_material"] = tube_material
@@ -864,14 +884,21 @@ with tab_geom:
                 geom_dict["fin_thickness"] = fin_t_mm / 1000.0
                 geom_dict["fin_density"] = fin_density
                 fin_type = st.selectbox(
-                    "Kanat??k Tipi",
+                    "Kanatçık Tipi",
                     options=["Dairesel (Annular)", "Düz (Rectangular)"],
                     index=safe_index(
                         ["Dairesel (Annular)", "Düz (Rectangular)"], get_val("fin_type") or "Dairesel (Annular)"
                     ),
                 )
+                fin_attachment = st.selectbox(
+                    "API 661 Kanat Tipi",
+                    options=ache_fin_names(),
+                    index=safe_index(ache_fin_names(), get_val("fin_attachment")),
+                )
                 geom_dict["k_fin"] = 237.0 if "Alüminyum" in fin_material else 45.0
                 geom_dict["fin_type"] = "rectangular" if "Rectangular" in fin_type else "annular"
+                geom_dict["fin_attachment"] = fin_attachment
+                geom_dict["api661_fin_type"] = fin_attachment
 
                 current_data.update(
                     {
@@ -880,6 +907,7 @@ with tab_geom:
                         "fin_density": fin_density,
                         "fin_material": fin_material,
                         "fin_type": fin_type,
+                        "fin_attachment": fin_attachment,
                     }
                 )
 

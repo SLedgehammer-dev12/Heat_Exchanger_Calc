@@ -94,8 +94,15 @@ MIDPOINT_CONVERGENCE_TOL = 1.0
 TUBE_MATERIALS = {
     "Karbon Çelik": 45.0,
     "Paslanmaz Çelik 316": 16.0,
+    "Paslanmaz Çelik 304": 16.2,
+    "Duplex Paslanmaz 2205": 19.0,
+    "Titanyum Gr. 2": 21.9,
     "Bakır": 400.0,
     "Alüminyum": 237.0,
+    "Admirallik Pirinci (C44300)": 111.0,
+    "Bakır-Nikel 90/10 (C70600)": 45.0,
+    "Bakır-Nikel 70/30 (C71500)": 29.0,
+    "Inconel 625": 9.8,
 }
 
 FIN_MATERIALS = {
