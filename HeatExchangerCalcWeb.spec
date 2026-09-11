@@ -4,12 +4,13 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-datas = [('data', 'data'), ('app_web.py', '.'), ('locale', 'locale')]
+datas = [('data', 'data'), ('app_web.py', '.'), ('app_shared.py', '.'), ('locale', 'locale')]
 binaries = []
 hiddenimports = [
-    'scipy._cyutility', 'engineering_utils', 'reportlab',
+    'scipy._cyutility', 'scipy._external.array_api_compat.numpy.fft',
+    'numpy._core._exceptions', 'app_shared', 'engineering_utils', 'reportlab',
     'app_web', 'fluids_db', 'heat_exchanger', 'reporting', 'updater',
-    'version', 'logging_config', 'engineering_utils',
+    'version', 'logging_config',
     'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
     'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
 ]
@@ -20,17 +21,16 @@ datas += collect_data_files('ht')
 datas += collect_data_files('pint')
 datas += collect_data_files('iapws')
 datas += copy_metadata('streamlit')
-tmp_ret = collect_all('reportlab')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('streamlit')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+for pkg in ['reportlab', 'numpy', 'scipy', 'certifi', 'streamlit']:
+    tmp_ret = collect_all(pkg)
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 icon_path = 'app_icon.icns' if sys.platform == 'darwin' else 'app_icon.ico'
 
 
 a = Analysis(
     ['run_web.py'],
-    pathex=[],
+    pathex=['.'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

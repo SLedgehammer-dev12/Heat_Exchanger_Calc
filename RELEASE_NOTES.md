@@ -1,3 +1,19 @@
+# Heat Exchanger Calc v0.4.1
+
+Packaging, runtime import resilience, and dependency patch resolving executable startup crashes on Windows and macOS (`ModuleNotFoundError: numpy._core._exceptions` and `ModuleNotFoundError: app_shared`).
+
+## Bug Fixes & Packaging (v0.4.1)
+
+- **`sys.path` Bootstrap in Entry Points** — Added explicit `BASE_DIR` determination (`sys._MEIPASS` fallback to script directory) and prepended `BASE_DIR` to `sys.path` across `app_desktop.py`, `app_web.py`, `run_desktop.py`, and `run_web.py`. Resolves `ModuleNotFoundError: No module named 'app_shared'` when launching outside the project root directory or within PyInstaller bundles.
+- **Explicit Data Bundling & Search Paths for `app_shared`** — Added `app_shared.py` to PyInstaller datas in `build_windows.ps1` (`--add-data "app_shared.py;."`), `build_macos.sh` (`--add-data "app_shared.py:."`), and spec files (`HeatExchangerCalcDesktop.spec`, `HeatExchangerCalcWeb.spec`). Added `--paths .` and `--paths $PSScriptRoot` to Windows build script and `pathex=['.']` to spec Analysis definitions to prevent root module drop during discovery.
+- **NumPy 2.x PyInstaller Packaging Fix** — Added `--collect-all numpy` and `--hidden-import numpy._core._exceptions` to `build_windows.ps1`, `HeatExchangerCalcDesktop.spec`, and `HeatExchangerCalcWeb.spec`. Resolves the missing submodule crash on Windows when running against NumPy 2.x.
+- **SciPy & Certifi Bundle Collection** — Added `--collect-all scipy` and `--collect-all certifi` to Windows build configurations, ensuring all FFT dynamic extensions and SSL root certificates are bundled into standalone binaries.
+- **Shared Architecture Hidden Import** — Added `app_shared` to PyInstaller hidden imports for desktop and web configurations to ensure complete module discovery in one-file packages.
+- **CI / Release Workflow Upgrades** — Updated GitHub Actions release workflow to install the latest PyInstaller with official NumPy 2.x hooks prior to packaging.
+- **Regression Test Coverage** — Added assertions in `test_lmtd_iter.py` verifying that all build specifications bundle `app_shared.py`, NumPy exceptions, and configure root search paths.
+
+---
+
 # Heat Exchanger Calc v0.4.0
 
 Comprehensive industrial standards, rigorous correlations, and multi-platform architecture release.

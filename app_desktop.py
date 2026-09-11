@@ -4,6 +4,11 @@ import logging
 import os
 import sys
 
+# Ensure application base directory and PyInstaller bundle directory are in sys.path
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal

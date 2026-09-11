@@ -419,6 +419,11 @@ class HeatExchangerRegressionTests(unittest.TestCase):
             self.assertIn("engineering_utils", spec_text)
             self.assertIn("reportlab", spec_text)
             self.assertIn("collect_data_files('ht')", spec_text)
+            self.assertIn("numpy", spec_text)
+            self.assertIn("numpy._core._exceptions", spec_text)
+            self.assertIn("app_shared", spec_text)
+            self.assertIn("app_shared.py", spec_text)
+            self.assertIn("pathex=['.']", spec_text)
             self.assertTrue(
                 "icon='app_icon.ico'" in spec_text
                 or "icon=['app_icon.ico']" in spec_text

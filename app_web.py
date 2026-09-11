@@ -1,7 +1,14 @@
 import io
 import json
 import logging
+import os
+import sys
 from typing import Any
+
+# Ensure application base directory and PyInstaller bundle directory are in sys.path
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 import pandas as pd
 import streamlit as st

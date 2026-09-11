@@ -13,9 +13,20 @@ $common = @(
     "--noconfirm",
     "--onefile",
     "--noupx",
+    "--paths", ".",
+    "--paths", "$PSScriptRoot",
     "--icon", "app_icon.ico",
     "--version-file", "version_info.txt",
     "--hidden-import", "scipy._cyutility",
+    "--hidden-import", "scipy._external.array_api_compat.numpy.fft",
+    "--hidden-import", "numpy._core._exceptions",
+    "--hidden-import", "app_shared",
+    "--hidden-import", "fluids_db",
+    "--hidden-import", "heat_exchanger",
+    "--hidden-import", "logging_config",
+    "--hidden-import", "reporting",
+    "--hidden-import", "updater",
+    "--hidden-import", "version",
     "--hidden-import", "engineering_utils",
     "--hidden-import", "reportlab",
     "--hidden-import", "config",
@@ -37,12 +48,16 @@ $common = @(
     "--collect-data", "pint",
     "--collect-data", "iapws",
     "--collect-all", "reportlab",
+    "--collect-all", "numpy",
+    "--collect-all", "scipy",
+    "--collect-all", "certifi",
     "--exclude-module", "tkinter",
     "--exclude-module", "IPython",
     "--exclude-module", "notebook",
     "--exclude-module", "jupyter",
     "--add-data", "data;data",
-    "--add-data", "locale;locale"
+    "--add-data", "locale;locale",
+    "--add-data", "app_shared.py;."
 )
 
 pyinstaller @common --windowed --name HeatExchangerCalcDesktop app_desktop.py

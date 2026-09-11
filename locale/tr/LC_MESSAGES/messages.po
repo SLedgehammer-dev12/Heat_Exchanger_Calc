@@ -3,7 +3,7 @@
 # This file is distributed under the same license as the project.
 msgid ""
 msgstr ""
-"Project-Id-Version: heat-exchanger-calc 0.4.0\n"
+"Project-Id-Version: heat-exchanger-calc 0.4.1\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-09-10\n"
 "Language: tr\n"

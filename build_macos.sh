@@ -40,6 +40,8 @@ HIDDEN_IMPORTS=(
     --hidden-import updater
     --hidden-import version
     --hidden-import scipy._external.array_api_compat.numpy.fft
+    --hidden-import numpy._core._exceptions
+    --hidden-import app_shared
 )
 
 COLLECT_ARGS=(
@@ -65,6 +67,7 @@ EXCLUDES=(
 DATA_DIRS=(
     --add-data "data:data"
     --add-data "locale:locale"
+    --add-data "app_shared.py:."
 )
 
 PYINSTALLER_BASE=(

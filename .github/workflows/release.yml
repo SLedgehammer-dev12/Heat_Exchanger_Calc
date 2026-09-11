@@ -17,8 +17,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install --upgrade pip setuptools wheel
+          pip install --upgrade pyinstaller
+          pip install -r requirements.txt
           pip install PyQt5 streamlit
 
       - name: Build

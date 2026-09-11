@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heat-exchanger-calc"
-version = "0.4.0"
+version = "0.4.1"
 description = "Fin-tube heat exchanger thermodynamic & geometric analysis tool"
 requires-python = ">=3.10"
 license = {text = "MIT"}
