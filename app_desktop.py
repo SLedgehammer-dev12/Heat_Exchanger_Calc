@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import logging
@@ -85,6 +86,11 @@ class QLogHandler(logging.Handler, QObject):
             self.log_signal.emit(msg, record.levelno)
         except Exception:
             pass
+
+    def close(self):
+        with contextlib.suppress(Exception):
+            logging.getLogger().removeHandler(self)
+        super().close()
 
 
 class CalculationWorker(QObject):
@@ -528,6 +534,13 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.qt_log_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S"))
         self.qt_log_handler.log_signal.connect(self.append_log)
         logging.getLogger().addHandler(self.qt_log_handler)
+
+    def closeEvent(self, event):
+        if hasattr(self, "qt_log_handler"):
+            with contextlib.suppress(Exception):
+                logging.getLogger().removeHandler(self.qt_log_handler)
+                self.qt_log_handler.close()
+        super().closeEvent(event)
 
     def initUI(self):
         # Menu Bar for Save/Load
