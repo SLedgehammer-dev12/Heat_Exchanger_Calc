@@ -1542,6 +1542,7 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
 
     function setBoilerCount(count) {
       state.n_boilers = Math.max(1, Math.min(5, count));
+      window.currentBoilerCount = state.n_boilers;
 
       // Update quick toggle buttons
       [1, 2, 3, 4, 5].forEach(i => {
@@ -1589,6 +1590,9 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
 
       selectEquipment(state.selected_eq);
       recalculate();
+      if (typeof window.sync3DBoilerCount === "function") {
+        try { window.sync3DBoilerCount(state.n_boilers); } catch (e) {}
+      }
     }
 
     function setCondenserType(type) {
@@ -2258,6 +2262,8 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
 
       const dp_pipes_sum_bar = res_supply.dp_bar + res_bin.dp_bar + res_ret.dp_bar + (state.bypass_ratio > 0.01 ? res_byp.dp_bar * state.bypass_ratio : 0.0);
       const dp_pipe_bar = dp_pipes_sum_bar;
+      const dp_static_bar = (rho_oil * 9.81 * (state.static_elevation_m ?? 8.0)) / 1e5;
+      const dp_hx_bar = (state.hx_dp_bar ?? 0.35) * Math.pow(Math.max(0.05, m_active / 32.0), 1.85);
 
       // Closed-loop dynamic friction head: Pipes + Boilers + Exchangers
       // (shortcut: closed circulation loop static elevation head cancels out between riser and downcomer)
@@ -2528,20 +2534,33 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       }
 
       const plant3DTelemetry = {
+        n_boilers: state.n_boilers,
         boilers: boilerTelemetry,
         superheater: { Q_kW: q_sh / 1000.0, T_oil_in: t_oil_sh_in_final, T_cp_out: t_cp_sup },
         boiler: { Q_kW: q_ph / 1000.0, T_oil_out: t_oil_ph_out, T_sat: t_sat },
         turbine: { W_mech_kW: w_turb_mech_kw, W_el_kW: w_turb_kw, eta_is: turb_eta_is, dh_is_kJ: dh_is / 1000.0, pr: pr },
-        condenser: { Q_kW: q_cond / 1000.0, type: state.condenser_type, W_parasitic_kW: w_cond_parasitic_kw },
+        condenser: { Q_kW: q_cond / 1000.0, type: state.condenser_type, W_parasitic_kW: w_cond_parasitic_kw, T_coolant_in_C: isAirCond ? state.T_air_in : state.T_cw_in },
         pump_oil: { W_kW: w_pump_kw, m_oil: state.m_oil, dp_bar: dp_bar },
         pump_cp: { W_kW: w_cp_pump_kw, m_cp: m_cp_actual, dp_bar: Math.max(0.0, state.P_evap_bar - p_cond_actual) },
+        valve: { bypass_pct: state.bypass_ratio * 100.0, m_bypass_kg_s: m_bypass, m_active_kg_s: m_active },
         orc: { W_net_kW: w_net_kw, fluid: state.orc_fluid_sel, eta_cycle: (q_orc_total > 0 ? (w_net_kw / (q_orc_total / 1000.0)) : 0.0) }
       };
       window.latestCalcResult = plant3DTelemetry;
 
       if (typeof window.updatePlant3D === "function") {
-        window.updatePlant3D(plant3DTelemetry);
+        try {
+          window.updatePlant3D(plant3DTelemetry);
+        } catch (err3d) {
+          console.warn("3D plant sync warning:", err3d);
+        }
       }
+    }
+
+    function normalizeEquipmentId(rawEq) {
+      let canon = String(rawEq || 'boiler_1').replace(/^node_/, '');
+      if (canon === 'sh') canon = 'superheater';
+      if (canon === 'ph') canon = 'preheater';
+      return canon;
     }
 
     // Update Live Diagnostic HUD in Right-Side Inspector
@@ -2549,7 +2568,7 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       const hud = document.getElementById('insp_live_hud');
       if (!hud) return;
 
-      const eq = state.selected_eq || 'boiler_1';
+      const eq = normalizeEquipmentId(state.selected_eq || 'boiler_1');
       let title = '';
       let badge = '';
       let rows = [];
@@ -2858,8 +2877,12 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       recalculate();
     }
 
-    function selectEquipment(eq) {
+    function selectEquipment(rawEq) {
+      const eq = normalizeEquipmentId(rawEq);
       state.selected_eq = eq;
+      if (typeof window.sync3DSelectedEquipment === "function") {
+        try { window.sync3DSelectedEquipment(eq); } catch (e) {}
+      }
       document.querySelectorAll('.equipment-node').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.pipe-clickable').forEach(el => el.classList.remove('active'));
 
@@ -3353,6 +3376,9 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       }
       selectEquipment(state.selected_eq);
       recalculate();
+      if (typeof window.sync3DBoilerCount === "function") {
+        try { window.sync3DBoilerCount(state.n_boilers); } catch (e) {}
+      }
     }
 
     // Interactive KPI Engineering & Formula Info Modal
@@ -3476,7 +3502,10 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       }
       const tCpVal = initData.T_cp_in !== undefined ? initData.T_cp_in : initData.T_cold_in;
       if (tCpVal !== undefined && !isNaN(parseFloat(tCpVal))) {
-        state.T_cp_in = parseFloat(tCpVal);
+        const parsedTCp = parseFloat(tCpVal);
+        if (parsedTCp <= 115.0) {
+          state.T_cp_in = parsedTCp;
+        }
       }
       const pEvapVal = initData.P_evap_bar !== undefined ? initData.P_evap_bar : (initData.st_shell_p_des_bar !== undefined ? initData.st_shell_p_des_bar : initData.st_tube_p_des_bar);
       if (pEvapVal !== undefined && !isNaN(parseFloat(pEvapVal)) && parseFloat(pEvapVal) > 0) {
@@ -3642,7 +3671,7 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
         meta: {
           title: "ORC & WHRU Canlı Simülasyon Veri Paketi",
           exported_at: new Date().toISOString(),
-          version: "2.4.0-web"
+          version: "2.4.2-web"
         },
         plant_configuration: {
           n_boilers: state.n_boilers,
@@ -3707,6 +3736,9 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
 
     window.selectNode = selectEquipment;
     window.setCondenserType = setCondenserType;
+    window.setBoilerCount = setBoilerCount;
+    window.changeBoilerCount = changeBoilerCount;
+    window.recalculate = recalculate;
   </script>
   <script>
     __PLANT_3D_JS_PLACEHOLDER__
@@ -3714,6 +3746,13 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
 </body>
 </html>
 """
+    import importlib
+    import sys
+
+    import orc_3d_plant_component
+
+    if not getattr(sys, "frozen", False):
+        importlib.reload(orc_3d_plant_component)
     from orc_3d_plant_component import get_orc_3d_plant_container_html, get_orc_3d_plant_js
 
     res_html = html_template.replace(

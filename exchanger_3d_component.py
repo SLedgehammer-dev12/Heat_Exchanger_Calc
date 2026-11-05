@@ -414,7 +414,7 @@ def get_exchanger_3d_html(geom_data: dict[str, Any] | None = None) -> str:
       renderer.shadowMap.enabled = true;
 
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x0f172a);
+      scene.background = new THREE.Color(0xe8f0fe);
 
       // Camera
       camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -429,15 +429,19 @@ def get_exchanger_3d_html(geom_data: dict[str, Any] | None = None) -> str:
       controls.target.set(0, 0, 0);
 
       // Lights
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.15);
       scene.add(ambientLight);
 
-      const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.9);
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 0.90);
+      hemiLight.position.set(0, 15, 0);
+      scene.add(hemiLight);
+
+      const dirLight1 = new THREE.DirectionalLight(0xfffbeb, 1.35);
       dirLight1.position.set(6, 10, 8);
       scene.add(dirLight1);
 
-      const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.4);
-      dirLight2.position.set(-6, -4, -6);
+      const dirLight2 = new THREE.DirectionalLight(0xe0f2fe, 0.75);
+      dirLight2.position.set(-6, 4, -6);
       scene.add(dirLight2);
 
       // Build Model Geometry
@@ -482,15 +486,15 @@ def get_exchanger_3d_html(geom_data: dict[str, Any] | None = None) -> str:
 
       // Materials
       matShellSolid = new THREE.MeshStandardMaterial({{
-        color: 0x475569,
+        color: 0x64748b,
         roughness: 0.35,
-        metalness: 0.75
+        metalness: 0.35
       }});
 
       matShellCut = new THREE.MeshStandardMaterial({{
-        color: 0x64748b,
+        color: 0x94a3b8,
         roughness: 0.35,
-        metalness: 0.7,
+        metalness: 0.35,
         side: THREE.DoubleSide
       }});
 
@@ -506,34 +510,34 @@ def get_exchanger_3d_html(geom_data: dict[str, Any] | None = None) -> str:
       }});
 
       matTube = new THREE.MeshStandardMaterial({{
-        color: 0xd97706, // Brass/copper tone
-        roughness: 0.28,
-        metalness: 0.85
+        color: 0xf59e0b, // Bright brass/copper tone
+        roughness: 0.30,
+        metalness: 0.40
       }});
 
       matTubesheet = new THREE.MeshStandardMaterial({{
-        color: 0x94a3b8,
-        roughness: 0.4,
-        metalness: 0.8
+        color: 0xcbd5e1,
+        roughness: 0.35,
+        metalness: 0.35
       }});
 
       matBaffle = new THREE.MeshStandardMaterial({{
         color: 0xfbbf24,
-        roughness: 0.3,
-        metalness: 0.75,
+        roughness: 0.32,
+        metalness: 0.35,
         side: THREE.DoubleSide
       }});
 
       matFrontHead = new THREE.MeshStandardMaterial({{
-        color: 0x1e3a8a, // Blue industrial bonnet
-        roughness: 0.4,
-        metalness: 0.65
+        color: 0x0284c7, // Bright blue industrial bonnet
+        roughness: 0.38,
+        metalness: 0.32
       }});
 
       matRearHead = new THREE.MeshStandardMaterial({{
-        color: 0x1e3a8a,
-        roughness: 0.4,
-        metalness: 0.65
+        color: 0x0284c7,
+        roughness: 0.38,
+        metalness: 0.32
       }});
 
       // 1. SHELL (Cylindrical Body with cutaway capability)

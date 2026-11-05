@@ -285,6 +285,45 @@ class TestOrc3DPlantComponent(unittest.TestCase):
                     dot, 0.0, places=4, msg=f"Corner {i+1} in {name} is not a 90° turn (dot={dot})"
                 )
 
+    def test_whru_boiler_count_2d_3d_sync_and_bright_lighting(self):
+        """Verify 2D/3D WHRU boiler count sync (1..5), ReferenceError-free recalculate, and bright 3D scene lighting."""
+        html = orc_schematic_component.get_orc_schematic_html({"n_boilers": 3})
+        js = orc_3d_plant_component.get_orc_3d_plant_js()
+        container_html = orc_3d_plant_component.get_orc_3d_plant_container_html()
+
+        # 1. Verify dp_static_bar and dp_hx_bar are defined before dp_bar in recalculate() so updatePlant3D is always reached
+        idx_dp_hx_def = html.find("const dp_hx_bar =")
+        idx_dp_bar_use = html.find("const dp_bar = dp_pipes_sum_bar + max_dp + dp_hx_bar;")
+        idx_update_3d = html.find("window.updatePlant3D(plant3DTelemetry);")
+        self.assertGreater(idx_dp_hx_def, 0)
+        self.assertGreater(idx_dp_bar_use, idx_dp_hx_def)
+        self.assertGreater(idx_update_3d, idx_dp_bar_use)
+
+        # 2. Verify 2D <-> 3D WHRU boiler count & equipment ID synchronization hooks
+        self.assertIn("window.currentBoilerCount = state.n_boilers;", html)
+        self.assertIn("window.setBoilerCount = setBoilerCount;", html)
+        self.assertIn("window.changeBoilerCount = changeBoilerCount;", html)
+        self.assertIn("window.recalculate = recalculate;", html)
+        self.assertIn("function normalizeEquipmentId(rawEq)", html)
+        self.assertIn("window.sync3DBoilerCount = function(count)", js)
+        self.assertIn("window.change3DBoilerCount = function(delta)", js)
+        self.assertIn("window.sync3DSelectedEquipment = function(eqId)", js)
+        self.assertIn("window.selected3DObject", js)
+        self.assertIn('id: "node_valve"', js)
+        self.assertIn("window.sync3DBoilerCount(initBoilerCount);", js)
+        self.assertIn('id="lbl_3d_whru_count"', container_html)
+        self.assertIn("isObjectVisibleInHierarchy", js)
+
+        # 3. Verify bright daylight / studio lighting & non-dark PBR materials in 3D scene
+        self.assertIn("new THREE.Color(0xe8f0fe)", js)
+        self.assertIn("new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 0.95)", js)
+        self.assertIn("ACESFilmicToneMapping", js)
+        # Ensure high metalness (>= 0.70) without envMap is eliminated in 3D plant
+        metalness_vals = [float(v) for v in re.findall(r"metalness:\s*([0-9.]+)", js)]
+        self.assertTrue(len(metalness_vals) > 0)
+        for mv in metalness_vals:
+            self.assertLessEqual(mv, 0.45, f"Material metalness {mv} is too high without envMap and darkens 3D scene")
+
 
 if __name__ == "__main__":
     unittest.main()

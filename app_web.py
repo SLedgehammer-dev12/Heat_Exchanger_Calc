@@ -28,6 +28,9 @@ LOG_FILE = setup_logging("web")
 logger = logging.getLogger(__name__)
 
 
+import importlib
+
+import version as _version_mod
 from app_shared import MIXTURE_PRESETS, safe_index
 from config import EXCHANGER_ALLOWED_FLOWS, EXCHANGER_TYPES, TEMA_DESIGNATIONS, TUBE_MATERIALS
 from fluids_db import get_fluid_data, get_fluid_list_flat, get_mixture_fluid_data, materialize_fluid_data
@@ -42,6 +45,9 @@ from reporting import (
 )
 from standards import ache_fin_names, fouling_preset_options, tube_preset_options
 from updater import check_for_update, default_download_dir, download_release_asset
+
+if not getattr(sys, "frozen", False):
+    importlib.reload(_version_mod)
 from version import APP_NAME, VERSION
 
 _bwg_presets = tube_preset_options()
@@ -1680,8 +1686,9 @@ current_data = {
     "mu_cold": mu_cold,
     "k_cold": k_cold,
     "m_oil": to_kg_s(m_cold_raw if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else m_hot_raw, u_m_cold if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else u_m_hot, density_cold if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else density_hot),
-    "m_cp": to_kg_s(m_cold_raw, u_m_cold, density_cold),
-    "T_cp_in": T_cold_in,
+    "m_cp": to_kg_s(m_cold_raw, u_m_cold, density_cold) if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]) else 11.5,
+    "T_cp_in": T_cold_in if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]) else (55.0 if is_acc else 45.0),
+    "n_boilers": int(st.session_state.get("cfg_n_boilers", 2) or 2),
     "m_flue": to_kg_s(m_hot_raw, u_m_hot, density_hot) if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
     "T_flue_in": T_hot_in if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
     "flue_gas_cp": cp_hot if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
@@ -2049,6 +2056,14 @@ with tab_orc:
             f"canlı P&ID'ye aktarılmıştır. Tab 2'de hesaplanan özel eşanjör U ve Alan değerlerinin P&ID'ye tam yansıması için "
             f"**'🚀 HESAPLA'** butonunu çalıştırabilirsiniz."
         )
+    import orc_3d_plant_component
+    import orc_schematic_component
+
+    if not getattr(sys, "frozen", False):
+        importlib.reload(orc_3d_plant_component)
+        importlib.reload(orc_schematic_component)
+    from orc_schematic_component import get_orc_schematic_html
+
     _st_components.html(get_orc_schematic_html(current_data), height=890, scrolling=True)
 
 st.sidebar.download_button(

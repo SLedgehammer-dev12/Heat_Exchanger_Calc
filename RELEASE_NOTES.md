@@ -1,3 +1,15 @@
+# Heat Exchanger Calc v0.4.2
+
+Web ORC & WHRU Digital Twin synchronization, 3D studio lighting, and live thermodynamic solver resilience update.
+
+## Web & 3D Digital Twin Enhancements (v0.4.2)
+
+- **2D P&ID ↔ 3D Digital Twin Synchronization** — Synchronized WHRU boiler count (`1..5` parallel waste heat recovery boilers with automatic camera/controls reframing), condenser type (`ACC` A-frame vs. `Water` cooling tower + S&T condenser), and interactive equipment inspector selection (`normalizeEquipmentId`, `sync3DSelectedEquipment`, 3-way bypass valve `V-101`).
+- **Studio Daylight 3D Illumination** — Upgraded WebGL scenes (`orc_3d_plant_component.py` and `exchanger_3d_component.py`) to a bright studio daylight theme (`#e8f0fe`), added `HemisphereLight` + 3-point `DirectionalLight` setup, boosted `toneMappingExposure`, and capped PBR `metalness <= 0.40` to eliminate dark metallic reflections without environment maps.
+- **2D Live Thermodynamic Solver & State Guards** — Fixed `ReferenceError` variable declaration ordering in `recalculate()` (`dp_static_bar` / `dp_hx_bar`), guarded Cyclopentane inlet temperature (`T_cp_in <= 115 °C`) and flow (`m_cp`) against Tab 1 thermal oil parameter cross-contamination, and added live module reload (`importlib.reload`) for local Streamlit sessions.
+
+---
+
 # Heat Exchanger Calc v0.4.1
 
 Packaging, runtime import resilience, and dependency patch resolving executable startup crashes on Windows and macOS (`ModuleNotFoundError: numpy._core._exceptions` and `ModuleNotFoundError: app_shared`).

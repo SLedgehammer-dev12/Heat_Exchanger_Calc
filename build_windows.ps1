@@ -63,6 +63,11 @@ pyinstaller @common --windowed --name HeatExchangerCalcDesktop app_desktop.py
 
 $webArgs = @(
     "--hidden-import", "app_web",
+    "--hidden-import", "orc_schematic_component",
+    "--hidden-import", "orc_3d_plant_component",
+    "--hidden-import", "exchanger_3d_component",
+    "--hidden-import", "tubesheet_component",
+    "--hidden-import", "orc_system_model",
     "--hidden-import", "fluids_db",
     "--hidden-import", "heat_exchanger",
     "--hidden-import", "reporting",

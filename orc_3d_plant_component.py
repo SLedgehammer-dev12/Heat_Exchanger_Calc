@@ -32,7 +32,7 @@ def get_orc_3d_plant_container_html() -> str:
     """Return the container HTML element and toolbar for the 3D plant digital twin."""
     return """
       <!-- 3D Digital Twin Container (Toggled via View Switcher) -->
-      <div id="container_3d" style="display: none; position: relative; width: 100%; height: 620px; background: #0b1120; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);">
+      <div id="container_3d" style="display: none; position: relative; width: 100%; height: 620px; background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 55%, #e2e8f0 100%); border-radius: 10px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 2px 8px rgba(15,23,42,0.08);">
         <!-- 3D Canvas Mount Point -->
         <div id="canvas_3d_mount" style="width: 100%; height: 100%; cursor: grab;"></div>
 
@@ -45,10 +45,14 @@ def get_orc_3d_plant_container_html() -> str:
           <button type="button" class="btn-3d-cam" onclick="window.set3DCameraPreset && window.set3DCameraPreset('condenser')" title="Kondenser & Soğutma Kulesi Odak">❄️ Kondenser Odak</button>
           <button type="button" class="btn-3d-cam" onclick="window.reset3DCamera && window.reset3DCamera()" title="Kamerayı Varsayılana Sıfırla">🔄 Sıfırla</button>
           <span style="color:#475569; margin:0 2px;">|</span>
+          <button type="button" class="btn-3d-cam" onclick="window.change3DBoilerCount && window.change3DBoilerCount(-1)" title="Atık Isı Baca Kazanı Eksilt">➖</button>
+          <span id="lbl_3d_whru_count" style="display:inline-flex; align-items:center; font-size:11.5px; font-weight:700; color:#f8fafc; padding:0 4px;">🏭 WHRU: 2 Kazan</span>
+          <button type="button" class="btn-3d-cam" onclick="window.change3DBoilerCount && window.change3DBoilerCount(1)" title="Atık Isı Baca Kazanı Ekle">➕</button>
+          <span style="color:#475569; margin:0 2px;">|</span>
           <button type="button" id="btn_3d_cond_air" class="btn-3d-cam" style="border-color:#38bdf8;" onclick="window.set3DCondenserType && window.set3DCondenserType('air')" title="Hava Soğutmalı Kondenser (A-Frame ACC)">💨 ACC (Hava)</button>
           <button type="button" id="btn_3d_cond_water" class="btn-3d-cam" onclick="window.set3DCondenserType && window.set3DCondenserType('water')" title="Su Soğutmalı Yüzey Kondenseri & Soğutma Kulesi">💧 Kule (Su)</button>
-          <span style="display: inline-flex; align-items: center; font-size: 11px; color: #94a3b8; margin-left: 8px; font-weight: 500;">
-            🖱️ Sol Tık: Döndür (Orbit) | Sağ Tık: Kaydır (Pan) | Tekerlek: Zoom
+          <span style="display: inline-flex; align-items: center; font-size: 11px; color: #cbd5e1; margin-left: 6px; font-weight: 500;">
+            🖱️ Sol Tık: Döndür | Sağ Tık: Kaydır | Tekerlek: Zoom
           </span>
         </div>
 
@@ -114,10 +118,10 @@ def get_orc_3d_plant_js() -> str:
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
 
-    // 1. Scene & Camera Setup
+    // 1. Scene & Camera Setup (Bright Daylight / Engineering Studio Atmosphere)
     scene3D = new THREE.Scene();
-    scene3D.background = new THREE.Color(0x0b1120);
-    scene3D.fog = new THREE.FogExp2(0x0b1120, 0.007);
+    scene3D.background = new THREE.Color(0xe8f0fe);
+    scene3D.fog = new THREE.FogExp2(0xe8f0fe, 0.0015);
 
     camera3D = new THREE.PerspectiveCamera(45, width / height, 0.5, 600);
     camera3D.position.set(0, 52, 90);
@@ -134,6 +138,10 @@ def get_orc_3d_plant_js() -> str:
     renderer3D.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer3D.shadowMap.enabled = true;
     renderer3D.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (typeof THREE.ACESFilmicToneMapping !== "undefined") {
+      renderer3D.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer3D.toneMappingExposure = 1.25;
+    }
     container.innerHTML = "";
     container.appendChild(renderer3D.domElement);
 
@@ -148,12 +156,16 @@ def get_orc_3d_plant_js() -> str:
       controls3D.target.set(0, 10, 0);
     }
 
-    // 4. Industrial Plant Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.70);
+    // 4. High-Brightness Industrial Daylight & Studio Lighting Rig
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.15);
     scene3D.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.25);
-    sunLight.position.set(50, 75, 45);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 0.95);
+    hemiLight.position.set(0, 120, 0);
+    scene3D.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.45);
+    sunLight.position.set(55, 85, 50);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 1024;
     sunLight.shadow.mapSize.height = 1024;
@@ -165,11 +177,20 @@ def get_orc_3d_plant_js() -> str:
     sunLight.shadow.camera.bottom = -70;
     scene3D.add(sunLight);
 
-    const blueFillLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
-    blueFillLight.position.set(-50, 45, -45);
+    const blueFillLight = new THREE.DirectionalLight(0xe0f2fe, 0.85);
+    blueFillLight.position.set(-55, 60, -45);
     scene3D.add(blueFillLight);
 
+    const frontFillLight = new THREE.DirectionalLight(0xffffff, 0.65);
+    frontFillLight.position.set(0, 45, 90);
+    scene3D.add(frontFillLight);
+
     // 5. Build Plant Hierarchy
+    boilers3D = [];
+    plinths3D = [];
+    boilerRisers3D = [];
+    interactiveObjects = [];
+    animatedParticles = [];
     plant3DGroup = new THREE.Group();
     scene3D.add(plant3DGroup);
 
@@ -178,6 +199,22 @@ def get_orc_3d_plant_js() -> str:
     buildPlantEquipment();
     buildOrthogonalPipingNetwork();
     buildParticleFlowStreams();
+
+    // Sync initial WHRU boiler count with 2D schematic / initialData
+    const initBoilerCount = (window.latestCalcResult && window.latestCalcResult.boilers && window.latestCalcResult.boilers.length)
+      ? window.latestCalcResult.boilers.length
+      : ((window.latestCalcResult && typeof window.latestCalcResult.n_boilers === "number")
+        ? window.latestCalcResult.n_boilers
+        : ((typeof window.currentBoilerCount === "number" && window.currentBoilerCount >= 1)
+          ? window.currentBoilerCount
+          : ((typeof initialData !== "undefined" && initialData && initialData.n_boilers)
+            ? parseInt(initialData.n_boilers)
+            : ((typeof initData !== "undefined" && initData && initData.n_boilers)
+              ? parseInt(initData.n_boilers)
+              : 2))));
+    if (typeof window.sync3DBoilerCount === "function") {
+      window.sync3DBoilerCount(initBoilerCount);
+    }
 
     // 6. Raycaster & Mouse Interactivity
     raycaster3D = new THREE.Raycaster();
@@ -201,12 +238,12 @@ def get_orc_3d_plant_js() -> str:
    * 1. Concrete Plant Slab & Equipment Foundation Plinths (Beton Kaideler)
    * ------------------------------------------------------------------------- */
   function buildConcreteFoundation() {
-    // Ana Endüstriyel Zemin Plakası (Concrete Slab)
+    // Ana Endüstriyel Zemin Plakası (Bright Light-Gray Industrial Concrete Slab)
     const slabGeo = new THREE.BoxGeometry(165, 1.2, 115);
     const slabMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.88,
-      metalness: 0.12,
+      color: 0xcbd5e1,
+      roughness: 0.80,
+      metalness: 0.08,
     });
     const mainSlab = new THREE.Mesh(slabGeo, slabMat);
     mainSlab.position.y = -0.6;
@@ -214,13 +251,13 @@ def get_orc_3d_plant_js() -> str:
     plant3DGroup.add(mainSlab);
 
     // Zemin Genleşme Derzleri / Grid
-    const grid = new THREE.GridHelper(155, 31, 0x334155, 0x1e293b);
+    const grid = new THREE.GridHelper(155, 31, 0x64748b, 0x94a3b8);
     grid.position.y = 0.02;
     plant3DGroup.add(grid);
 
     // Güvenlik Yürüme Yolları (Yellow Safety Walkway Stripes)
     const walkwayGeo = new THREE.PlaneGeometry(145, 2.8);
-    const walkwayMat = new THREE.MeshBasicMaterial({ color: 0xca8a04, depthWrite: false });
+    const walkwayMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, depthWrite: false });
     const walkway = new THREE.Mesh(walkwayGeo, walkwayMat);
     walkway.rotation.x = -Math.PI / 2;
     walkway.position.set(0, 0.04, 18);
@@ -228,8 +265,8 @@ def get_orc_3d_plant_js() -> str:
 
     // Ekipman Beton Kaideleri (Elevated Plinths / Pedestals)
     const plinthMat = new THREE.MeshStandardMaterial({
-      color: 0x475569,
-      roughness: 0.9,
+      color: 0x94a3b8,
+      roughness: 0.78,
       metalness: 0.08,
     });
 
@@ -288,9 +325,9 @@ def get_orc_3d_plant_js() -> str:
    * ------------------------------------------------------------------------- */
   function buildPipeRacksAndSupports() {
     const steelMat = new THREE.MeshStandardMaterial({
-      color: 0x334155,
-      metalness: 0.85,
-      roughness: 0.35,
+      color: 0x475569,
+      metalness: 0.35,
+      roughness: 0.40,
     });
 
     // Pipe Rack 1: WHRU Kazanları Önünde Boylu Boyunca Uzanan Çelik Boru Köprüsü (x = -55 .. +13)
@@ -352,11 +389,11 @@ def get_orc_3d_plant_js() -> str:
    * 3. Industrial Plant Equipment Models (Gerçekçi 3D Ekipmanlar)
    * ------------------------------------------------------------------------- */
   function buildPlantEquipment() {
-    const steelShellMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.7, roughness: 0.3 });
-    const stainlessMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 });
-    const motorBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.5, roughness: 0.4 });
-    const darkExhaustMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.6, roughness: 0.5 });
-    const turbineGoldMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.9, roughness: 0.25 });
+    const steelShellMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.35, roughness: 0.38 });
+    const stainlessMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.35, roughness: 0.28 });
+    const motorBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.30, roughness: 0.38 });
+    const darkExhaustMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.30, roughness: 0.45 });
+    const turbineGoldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.40, roughness: 0.30 });
 
     // A. WHRU Atık Isı Kazanları (1..5 Dynamic WHRU Boilers)
     const whruXCoords = [-52, -37, -22, -7, 8];
@@ -580,15 +617,15 @@ def get_orc_3d_plant_js() -> str:
     accGroup = new THREE.Group();
     accGroup.position.set(-8, 0, 32);
 
-    const gantryMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.3 });
+    const gantryMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.35, roughness: 0.38 });
     const safetyYellowMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.4 });
-    const bundleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.75, roughness: 0.35 });
+    const bundleMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.35, roughness: 0.35 });
 
     // 6 Vertical Structural Columns on Concrete Pedestals
     [-14, 0, 14].forEach(cx => {
       [-5.8, 5.8].forEach(cz => {
         // Concrete Pedestal under Column Base
-        const ped = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 1.5), new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 }));
+        const ped = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 1.5), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.80 }));
         ped.position.set(cx, 0.3, cz);
         accGroup.add(ped);
 
@@ -635,7 +672,7 @@ def get_orc_3d_plant_js() -> str:
     });
 
     // Fan Deck Grating Platform (Yürüyüş ve Fan Katı)
-    const fanDeck = new THREE.Mesh(new THREE.BoxGeometry(32.0, 0.15, 12.8), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.6, roughness: 0.5 }));
+    const fanDeck = new THREE.Mesh(new THREE.BoxGeometry(32.0, 0.15, 12.8), new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.30, roughness: 0.45 }));
     fanDeck.position.set(0, 5.0, 0);
     fanDeck.receiveShadow = true;
     accGroup.add(fanDeck);
@@ -761,8 +798,8 @@ def get_orc_3d_plant_js() -> str:
     waterCondenserGroup = new THREE.Group();
     waterCondenserGroup.position.set(-8, 0, 32);
 
-    const frpTowerMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.3, roughness: 0.7 });
-    const louverMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.4, roughness: 0.5 });
+    const frpTowerMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.20, roughness: 0.55 });
+    const louverMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.25, roughness: 0.45 });
     const waterMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.1, roughness: 0.15, transparent: true, opacity: 0.85 });
 
     // --- BÖLÜM 1: TEMA Gövde-Boru Yüzey Kondenseri (Surface Condenser C-101) ---
@@ -770,7 +807,7 @@ def get_orc_3d_plant_js() -> str:
     sCondGrp.position.set(22, 0, 0); // World coords ~ (14, 0, 32)
 
     // Concrete Plinth & Steel Saddles
-    const sPlinth = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.6, 5.0), new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 }));
+    const sPlinth = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.6, 5.0), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.80 }));
     sPlinth.position.set(0, 0.3, 0);
     sCondGrp.add(sPlinth);
 
@@ -838,7 +875,7 @@ def get_orc_3d_plant_js() -> str:
     towerGrp.position.set(-8, 0, 0); // World coords ~ (-16, 0, 32)
 
     // Reinforced Concrete Basin (Sump)
-    const basin = new THREE.Mesh(new THREE.BoxGeometry(16.0, 1.2, 12.0), new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 }));
+    const basin = new THREE.Mesh(new THREE.BoxGeometry(16.0, 1.2, 12.0), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.80 }));
     basin.position.set(0, 0.6, 0);
     towerGrp.add(basin);
 
@@ -941,7 +978,7 @@ def get_orc_3d_plant_js() -> str:
     waterCondenserGroup.add(cwSupplyPipe);
 
     // CW Return (Warm, Cyan): from C-101 cwOutNoz (x = 18.1, y = 2.9, z = -0.8) -> riser at x = 16.0 -> Tower header (x = -0.8, y = 7.0, z = -0.8)
-    const cwRetMat = new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.5, roughness: 0.4 });
+    const cwRetMat = new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.30, roughness: 0.38 });
     const cwRetHoriz1 = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.5, 16), cwRetMat);
     cwRetHoriz1.rotation.z = Math.PI / 2;
     cwRetHoriz1.position.set(17.35, 2.9, -0.8);
@@ -1059,13 +1096,13 @@ def get_orc_3d_plant_js() -> str:
    * 4. Traditional Plant Orthogonal Piping System (Düz Boru, Dirsek, U-Turn, Flanş)
    * ------------------------------------------------------------------------- */
   function buildOrthogonalPipingNetwork() {
-    const pipeMatHot = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.85, roughness: 0.25 });
-    const pipeMatRet = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.85, roughness: 0.25 });
-    const pipeMatVap = new THREE.MeshStandardMaterial({ color: 0xc084fc, metalness: 0.85, roughness: 0.25 });
-    const pipeMatLiq = new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.80, roughness: 0.30 });
-    const flangeMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.90, roughness: 0.20 });
-    const valveMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.70, roughness: 0.35 });
-    const stainlessMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.90, roughness: 0.20 });
+    const pipeMatHot = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.30, roughness: 0.32 });
+    const pipeMatRet = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.30, roughness: 0.32 });
+    const pipeMatVap = new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.30, roughness: 0.32 });
+    const pipeMatLiq = new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.30, roughness: 0.32 });
+    const flangeMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.38, roughness: 0.28 });
+    const valveMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.32, roughness: 0.35 });
+    const stainlessMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.35, roughness: 0.28 });
 
     // --- PIPING ELEMENT HELPERS ---
 
@@ -1245,7 +1282,9 @@ def get_orc_3d_plant_js() -> str:
     // 3-Yollu By-pass Vana Gövdesi (V-101)
     const valveBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 1.2), valveMat);
     valveBody.position.set(16.5, 9.5, -12.0);
+    valveBody.userData = { id: "node_valve", name: "Oransal 3-Yollu By-Pass Vanası (V-101)", type: "valve" };
     plant3DGroup.add(valveBody);
+    interactiveObjects.push(valveBody);
     const valveActuator = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.0, 16), stainlessMat);
     valveActuator.position.set(17.5, 9.5, -12.0);
     valveActuator.rotation.z = Math.PI / 2;
@@ -1553,10 +1592,9 @@ def get_orc_3d_plant_js() -> str:
 
       const pMat = new THREE.PointsMaterial({
         color: cfg.color,
-        size: 1.15,
+        size: 1.25,
         transparent: true,
-        opacity: 0.90,
-        blending: THREE.AdditiveBlending
+        opacity: 0.95
       });
 
       const pSystem = new THREE.Points(pGeo, pMat);
@@ -1661,13 +1699,23 @@ def get_orc_3d_plant_js() -> str:
   /* -------------------------------------------------------------------------
    * 7. Interactive Raycasting & Telemetry HUD Overlay
    * ------------------------------------------------------------------------- */
+  function isObjectVisibleInHierarchy(obj) {
+    let curr = obj;
+    while (curr) {
+      if (curr.visible === false) return false;
+      curr = curr.parent;
+    }
+    return true;
+  }
+
   function on3DMouseMove(event) {
     const rect = renderer3D.domElement.getBoundingClientRect();
     mouse3D.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse3D.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster3D.setFromCamera(mouse3D, camera3D);
-    const intersects = raycaster3D.intersectObjects(interactiveObjects, false);
+    const visibleTargets = interactiveObjects.filter(isObjectVisibleInHierarchy);
+    const intersects = raycaster3D.intersectObjects(visibleTargets, false);
 
     if (intersects.length > 0) {
       renderer3D.domElement.style.cursor = "pointer";
@@ -1696,11 +1744,13 @@ def get_orc_3d_plant_js() -> str:
     mouse3D.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster3D.setFromCamera(mouse3D, camera3D);
-    const intersects = raycaster3D.intersectObjects(interactiveObjects, false);
+    const visibleTargets = interactiveObjects.filter(isObjectVisibleInHierarchy);
+    const intersects = raycaster3D.intersectObjects(visibleTargets, false);
 
     if (intersects.length > 0) {
       const obj = intersects[0].object;
       const data = obj.userData || {};
+      window.selected3DObject = obj;
       show3DTelemetryHUD(data);
 
       if (typeof selectNode === "function" && data.id) {
@@ -1708,6 +1758,24 @@ def get_orc_3d_plant_js() -> str:
       }
     }
   }
+
+  window.sync3DSelectedEquipment = function(eqId) {
+    if (!is3DInitialized || !interactiveObjects.length) return;
+    const canon = String(eqId || "").replace(/^node_/, "");
+    const match = interactiveObjects.find(obj => {
+      if (!isObjectVisibleInHierarchy(obj) || !obj.userData) return false;
+      const uid = String(obj.userData.id || "").replace(/^node_/, "");
+      if (uid === canon) return true;
+      if (canon === "boiler" && uid === "boiler_1") return true;
+      if (canon === "superheater" && uid === "sh") return true;
+      if (canon === "preheater" && uid === "ph") return true;
+      return false;
+    });
+    if (match) {
+      window.selected3DObject = match;
+      show3DTelemetryHUD(match.userData);
+    }
+  };
 
   function show3DTelemetryHUD(data) {
     const hud = document.getElementById("hud_3d_card");
@@ -1818,6 +1886,28 @@ def get_orc_3d_plant_js() -> str:
         <div><b>Yağ Sirkülasyon Debisi:</b> ${mOil} kg/s</div>
         <div><b>Pompa Tipi:</b> Manyetik Kaplinli Santrifüj Kızgın Yağ Pompası</div>
       `;
+    } else if (data.type === "cp_pump") {
+      const cpPumpData = res.pump_cp || {};
+      const wCp = cpPumpData.W_kW !== undefined ? cpPumpData.W_kW.toFixed(1) : "18.2";
+      const dpCp = cpPumpData.dp_bar !== undefined ? cpPumpData.dp_bar.toFixed(1) : "12.0";
+      const mCp = cpPumpData.m_cp !== undefined ? cpPumpData.m_cp.toFixed(2) : "11.5";
+      html = `
+        <div><b>Besleme Pompa Gücü:</b> <span style="color:#0284c7;font-weight:700;">${wCp} kW</span></div>
+        <div><b>Basınç Farkı (ΔP):</b> ${dpCp} bar</div>
+        <div><b>Siklopentan Debisi:</b> ${mCp} kg/s</div>
+        <div><b>Pompa Tipi:</b> Çok Kademeli Santrifüj ORC Besleme Pompası (API 610)</div>
+      `;
+    } else if (data.type === "valve") {
+      const vData = res.valve || {};
+      const bPct = vData.bypass_pct !== undefined ? vData.bypass_pct.toFixed(0) : "0";
+      const mByp = vData.m_bypass_kg_s !== undefined ? vData.m_bypass_kg_s.toFixed(1) : "0.0";
+      const mAct = vData.m_active_kg_s !== undefined ? vData.m_active_kg_s.toFixed(1) : "32.0";
+      html = `
+        <div><b>By-Pass Açıklığı:</b> <span style="color:#d97706;font-weight:700;">%${bPct}</span></div>
+        <div><b>By-Pass Yağ Debisi:</b> ${mByp} kg/s</div>
+        <div><b>ORC Eşanjörlerine Giden:</b> ${mAct} kg/s</div>
+        <div><b>Bağlantı:</b> 3. Port ➔ P-101 Pompa Emiş (Upstream) Hattı</div>
+      `;
     } else {
       html = `<div><b>Durum:</b> Aktif İşletmede</div><div><b>Hattı:</b> Kapalı Devre Sirkülasyon</div>`;
     }
@@ -1829,12 +1919,9 @@ def get_orc_3d_plant_js() -> str:
   /* -------------------------------------------------------------------------
    * 8. Synchronization with 2D P&ID & Thermodynamic Solver
    * ------------------------------------------------------------------------- */
-  window.updatePlant3D = function(calcResult) {
-    if (!calcResult) return;
-    window.latestCalcResult = calcResult;
-    if (!is3DInitialized) return;
-
-    const bCount = (calcResult.boilers && calcResult.boilers.length) ? calcResult.boilers.length : (window.currentBoilerCount || 2);
+  window.sync3DBoilerCount = function(count) {
+    const bCount = Math.max(1, Math.min(5, parseInt(count) || 2));
+    window.currentBoilerCount = bCount;
 
     boilers3D.forEach((bGrp, idx) => {
       const isVisible = (idx < bCount);
@@ -1842,6 +1929,29 @@ def get_orc_3d_plant_js() -> str:
       if (plinths3D[idx]) plinths3D[idx].visible = isVisible;
       if (boilerRisers3D[idx]) boilerRisers3D[idx].visible = isVisible;
     });
+
+    const lbl3D = document.getElementById("lbl_3d_whru_count");
+    if (lbl3D) lbl3D.textContent = `🏭 WHRU: ${bCount} Kazan`;
+  };
+
+  window.change3DBoilerCount = function(delta) {
+    if (typeof window.changeBoilerCount === "function") {
+      window.changeBoilerCount(delta);
+      return;
+    }
+    const nextCount = Math.max(1, Math.min(5, (window.currentBoilerCount || 2) + delta));
+    window.sync3DBoilerCount(nextCount);
+  };
+
+  window.updatePlant3D = function(calcResult) {
+    if (!calcResult) return;
+    window.latestCalcResult = calcResult;
+    const bCount = (calcResult.boilers && calcResult.boilers.length)
+      ? calcResult.boilers.length
+      : ((typeof calcResult.n_boilers === "number") ? calcResult.n_boilers : (window.currentBoilerCount || 2));
+    window.currentBoilerCount = bCount;
+    window.sync3DBoilerCount(bCount);
+    if (!is3DInitialized) return;
 
     // Dynamic Condenser Specialization (ACC vs Water-Cooled Cooling Tower; Default: ACC / "air")
     const condType = (calcResult.condenser && calcResult.condenser.type) || calcResult.condenser_type || "air";
@@ -1859,8 +1969,9 @@ def get_orc_3d_plant_js() -> str:
     if (btn3DAir) btn3DAir.style.borderColor = isAir ? "#38bdf8" : "rgba(71, 85, 105, 0.8)";
     if (btn3DWater) btn3DWater.style.borderColor = !isAir ? "#38bdf8" : "rgba(71, 85, 105, 0.8)";
 
-    if (hoveredObject && hoveredObject.userData) {
-      show3DTelemetryHUD(hoveredObject.userData);
+    const activeHudObj = hoveredObject || window.selected3DObject;
+    if (activeHudObj && activeHudObj.userData) {
+      show3DTelemetryHUD(activeHudObj.userData);
     }
   };
 
@@ -1933,6 +2044,9 @@ def get_orc_3d_plant_js() -> str:
       setTimeout(function() {
         on3DWindowResize();
       }, 50);
+      if (typeof window.recalculate === "function") {
+        window.recalculate();
+      }
       if (window.latestCalcResult) {
         window.updatePlant3D(window.latestCalcResult);
       }
@@ -1944,6 +2058,13 @@ def get_orc_3d_plant_js() -> str:
       if (btn3D) btn3D.classList.remove("active");
     }
   };
+
+  if (window.currentBoilerCount) {
+    window.sync3DBoilerCount(window.currentBoilerCount);
+  }
+  if (window.latestCalcResult && typeof window.updatePlant3D === "function") {
+    window.updatePlant3D(window.latestCalcResult);
+  }
 """
 
 

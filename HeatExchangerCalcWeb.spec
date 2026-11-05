@@ -13,6 +13,8 @@ hiddenimports = [
     'version', 'logging_config',
     'config', 'units', 'model_types', 'i18n', 'openpyxl', 'iapws',
     'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
+    'orc_schematic_component', 'orc_3d_plant_component', 'exchanger_3d_component',
+    'tubesheet_component', 'orc_system_model',
 ]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')
