@@ -39,8 +39,8 @@ def generate_tubesheet_svg(
             '<svg viewBox="0 0 400 100" xmlns="http://www.w3.org/2000/svg">'
             '<rect width="400" height="100" fill="#fee2e2" rx="8"/>'
             '<text x="200" y="55" text-anchor="middle" fill="#991b1b" font-family="sans-serif" font-size="14">'
-            'Geometri verisi eksik veya geçersiz (Pitch &gt; Do ve D_shell &gt; 0 olmalıdır).'
-            '</text></svg>'
+            "Geometri verisi eksik veya geçersiz (Pitch &gt; Do ve D_shell &gt; 0 olmalıdır)."
+            "</text></svg>"
         )
 
     r_shell = D_shell_mm / 2.0
@@ -55,7 +55,7 @@ def generate_tubesheet_svg(
     pass_lane_w = D_o_mm + 6.0 if tube_passes >= 2 else 0.0
 
     # Generate candidate grid coordinates
-    candidates: list[tuple[float, float, int]] = []
+    candidates: list[tuple[float, float, float, int]] = []
     span = int(math.ceil((r_shell * 2.0) / pitch_mm)) + 3
 
     # Layout coordinate mathematics
@@ -109,7 +109,7 @@ def generate_tubesheet_svg(
             elif tube_passes == 1:
                 pass_idx = 1
 
-            candidates.append((r_dist, x, y, pass_idx))  # type: ignore[arg-type]
+            candidates.append((r_dist, x, y, pass_idx))
 
     # Sort candidates radially from bundle center outward
     candidates.sort(key=lambda item: item[0])
@@ -134,15 +134,15 @@ def generate_tubesheet_svg(
     svg_parts: list[str] = [
         f'<svg viewBox="{-view_box_r:.1f} {-view_box_r:.1f} {view_dim:.1f} {view_dim:.1f}" '
         'xmlns="http://www.w3.org/2000/svg" style="width:100%; max-height:420px; display:block; margin:auto;">',
-        '<defs>',
+        "<defs>",
         '  <radialGradient id="shellBg" cx="50%" cy="50%" r="50%">',
         '    <stop offset="0%" stop-color="#ffffff"/>',
         '    <stop offset="100%" stop-color="#f1f5f9"/>',
-        '  </radialGradient>',
+        "  </radialGradient>",
         '  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">',
         '    <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.15"/>',
-        '  </filter>',
-        '</defs>',
+        "  </filter>",
+        "</defs>",
         # Shell Outer Flange & Wall
         f'<circle cx="0" cy="0" r="{r_shell + 10:.1f}" fill="#334155" filter="url(#shadow)"/>',
         f'<circle cx="0" cy="0" r="{r_shell:.1f}" fill="url(#shellBg)" stroke="#0f3a5d" stroke-width="3"/>',
@@ -157,12 +157,12 @@ def generate_tubesheet_svg(
     if tube_passes >= 2:
         plate_t = max(6.0, pass_lane_w * 0.5)
         svg_parts.append(
-            f'<rect x="{-r_shell:.1f}" y="{-plate_t/2.0:.1f}" width="{2.0*r_shell:.1f}" height="{plate_t:.1f}" '
+            f'<rect x="{-r_shell:.1f}" y="{-plate_t / 2.0:.1f}" width="{2.0 * r_shell:.1f}" height="{plate_t:.1f}" '
             'fill="#94a3b8" stroke="#475569" stroke-width="1" rx="2" opacity="0.85"/>'
         )
         if tube_passes >= 4:
             svg_parts.append(
-                f'<rect x="{-plate_t/2.0:.1f}" y="{-r_shell:.1f}" width="{plate_t:.1f}" height="{2.0*r_shell:.1f}" '
+                f'<rect x="{-plate_t / 2.0:.1f}" y="{-r_shell:.1f}" width="{plate_t:.1f}" height="{2.0 * r_shell:.1f}" '
                 'fill="#94a3b8" stroke="#475569" stroke-width="1" rx="2" opacity="0.85"/>'
             )
 
@@ -182,9 +182,9 @@ def generate_tubesheet_svg(
     ratio_warn = " ⚠️ P/Do<1.25" if p_ratio < 1.249 else ""
     svg_parts.append(
         f'<text x="0" y="{info_y:.1f}" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11.5" font-weight="600" fill="#1e293b">'
-        f'TEMA {angle_val}° Açılı Ayna — {n_drawn}/{target_count} Boru | P={pitch_mm:.1f} mm (P/Do={p_ratio:.2f}{ratio_warn}) | {int(tube_passes)} Geçiş'
-        '</text>'
+        f"TEMA {angle_val}° Açılı Ayna — {n_drawn}/{target_count} Boru | P={pitch_mm:.1f} mm (P/Do={p_ratio:.2f}{ratio_warn}) | {int(tube_passes)} Geçiş"
+        "</text>"
     )
-    svg_parts.append('</svg>')
+    svg_parts.append("</svg>")
 
     return "\n".join(svg_parts)

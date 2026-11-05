@@ -60,13 +60,13 @@ def calc_pipe_darcy(
         elif re < 4000:
             f_lam_trans = 64.0 / 2300.0
             term1 = (rough_m / d_m) / 3.7
-            term2 = 5.74 / (4000.0 ** 0.9)
+            term2 = 5.74 / (4000.0**0.9)
             f_turb_trans = 0.25 / ((math.log10(term1 + term2)) ** 2)
             weight = (re - 2300.0) / (4000.0 - 2300.0)
             f = (1.0 - weight) * f_lam_trans + weight * f_turb_trans
         else:
             term1 = (rough_m / d_m) / 3.7
-            term2 = 5.74 / (re ** 0.9)
+            term2 = 5.74 / (re**0.9)
             f = 0.25 / ((math.log10(term1 + term2)) ** 2)
             f = max(0.008, min(0.08, f))
     f = max(0.008, f)
@@ -83,6 +83,7 @@ def cyclopentane_tsat(p_bar: float) -> float:
     p = max(0.2, min(40.0, p_bar))
     try:
         import CoolProp.CoolProp as CP
+
         return float(CP.PropsSI("T", "P", p * 1e5, "Q", 0, "Cyclopentane") - 273.15)
     except Exception:
         p_mmhg = p * 750.06168
@@ -98,6 +99,7 @@ def cyclopentane_hfg(t_sat_c: float) -> float:
     t = max(20.0, min(235.0, t_sat_c))
     try:
         import CoolProp.CoolProp as CP
+
         t_k = t + 273.15
         h_l = CP.PropsSI("H", "T", t_k, "Q", 0, "Cyclopentane")
         h_v = CP.PropsSI("H", "T", t_k, "Q", 1, "Cyclopentane")
@@ -126,6 +128,7 @@ def cyclopentane_properties(
 
     try:
         import CoolProp.CoolProp as CP
+
         t_sat = float(CP.PropsSI("T", "P", p_evap_pa, "Q", 0, "Cyclopentane") - 273.15)
         h_l = float(CP.PropsSI("H", "P", p_evap_pa, "Q", 0, "Cyclopentane"))
         h_v = float(CP.PropsSI("H", "P", p_evap_pa, "Q", 1, "Cyclopentane"))
@@ -379,7 +382,11 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
             c_max_sh = max(c_oil_active, c_cp_vap_flow)
             cr_sh = c_min_sh / c_max_sh if c_max_sh > 0 else 1.0
             ntu_sh = ua_sh / c_min_sh
-            eps_sh = (1.0 - math.exp(-ntu_sh * (1.0 - cr_sh))) / (1.0 - cr_sh * math.exp(-ntu_sh * (1.0 - cr_sh))) if cr_sh < 1.0 else ntu_sh / (1.0 + ntu_sh)
+            eps_sh = (
+                (1.0 - math.exp(-ntu_sh * (1.0 - cr_sh))) / (1.0 - cr_sh * math.exp(-ntu_sh * (1.0 - cr_sh)))
+                if cr_sh < 1.0
+                else ntu_sh / (1.0 + ntu_sh)
+            )
             eps_sh = max(0.05, min(0.88, eps_sh))
 
             q_sh_max = c_min_sh * max(0.0, t_oil_sh_in - t_sat)
@@ -406,7 +413,11 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
             c_max_pre = max(c_oil_active, c_cp_l)
             cr_pre = c_min_pre / c_max_pre if c_max_pre > 0 else 1.0
             ntu_pre = ua_pre / c_min_pre
-            eps_pre = (1.0 - math.exp(-ntu_pre * (1.0 - cr_pre))) / (1.0 - cr_pre * math.exp(-ntu_pre * (1.0 - cr_pre))) if cr_pre < 1.0 else ntu_pre / (1.0 + ntu_pre)
+            eps_pre = (
+                (1.0 - math.exp(-ntu_pre * (1.0 - cr_pre))) / (1.0 - cr_pre * math.exp(-ntu_pre * (1.0 - cr_pre)))
+                if cr_pre < 1.0
+                else ntu_pre / (1.0 + ntu_pre)
+            )
             eps_pre = max(0.05, min(0.92, eps_pre))
 
             q_pre_max = c_min_pre * max(0.0, t_oil_evap_out - t_cp_in)
@@ -573,43 +584,51 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
 
     boilers_res: list[dict[str, Any]] = []
     for idx, b in enumerate(boilers_cfg):
-        boilers_res.append({
-            "index": idx + 1,
-            "name": f"WHRU-{idx + 1}",
-            "Q_kW": round(b["q"] / 1000.0, 2),
-            "T_flue_in_C": round(b["t_f_in"], 1),
-            "T_flue_out_C": round(b["t_f_out"], 1),
-            "T_oil_in_C": round(t_oil_ret_mixed, 1),
-            "T_oil_out_C": round(b["t_o_out"], 1),
-            "m_flue_kg_s": round(b["m_f"], 2),
-            "m_oil_kg_s": round(b["m_oil"], 2),
-            "split_oil_pct": round((b["m_oil"] / m_oil) * 100.0, 1) if m_oil > 0 else 0.0,
-            "dp_bar": round(b["dp_bar"], 2),
-            "active": True,
-        })
+        boilers_res.append(
+            {
+                "index": idx + 1,
+                "name": f"WHRU-{idx + 1}",
+                "Q_kW": round(b["q"] / 1000.0, 2),
+                "T_flue_in_C": round(b["t_f_in"], 1),
+                "T_flue_out_C": round(b["t_f_out"], 1),
+                "T_oil_in_C": round(t_oil_ret_mixed, 1),
+                "T_oil_out_C": round(b["t_o_out"], 1),
+                "m_flue_kg_s": round(b["m_f"], 2),
+                "m_oil_kg_s": round(b["m_oil"], 2),
+                "split_oil_pct": round((b["m_oil"] / m_oil) * 100.0, 1) if m_oil > 0 else 0.0,
+                "dp_bar": round(b["dp_bar"], 2),
+                "active": True,
+            }
+        )
 
     b1_dict = boilers_res[0]
-    b2_dict = boilers_res[1] if n_boilers >= 2 else {
-        "index": 2,
-        "name": "WHRU-2",
-        "Q_kW": 0.0,
-        "T_flue_in_C": round(t_flue_in, 1),
-        "T_flue_out_C": round(t_flue_in, 1),
-        "T_oil_in_C": round(t_oil_ret_mixed, 1),
-        "T_oil_out_C": round(t_oil_ret_mixed, 1),
-        "m_flue_kg_s": 0.0,
-        "m_oil_kg_s": 0.0,
-        "split_oil_pct": 0.0,
-        "active": False,
-        "dp_bar": 0.0,
-    }
+    b2_dict = (
+        boilers_res[1]
+        if n_boilers >= 2
+        else {
+            "index": 2,
+            "name": "WHRU-2",
+            "Q_kW": 0.0,
+            "T_flue_in_C": round(t_flue_in, 1),
+            "T_flue_out_C": round(t_flue_in, 1),
+            "T_oil_in_C": round(t_oil_ret_mixed, 1),
+            "T_oil_out_C": round(t_oil_ret_mixed, 1),
+            "m_flue_kg_s": 0.0,
+            "m_oil_kg_s": 0.0,
+            "split_oil_pct": 0.0,
+            "active": False,
+            "dp_bar": 0.0,
+        }
+    )
 
     return {
         "params": p,
         "boiler": {
             "Q_kW": round(q_boiler / 1000.0, 2),
             "T_flue_in_C": round(
-                t_flue_in if n_boilers == 1 else (sum(b["m_f"] * b["t_f_in"] for b in boilers_cfg) / tot_m_flue if tot_m_flue > 0 else t_flue_in),
+                t_flue_in
+                if n_boilers == 1
+                else (sum(b["m_f"] * b["t_f_in"] for b in boilers_cfg) / tot_m_flue if tot_m_flue > 0 else t_flue_in),
                 1,
             ),
             "T_flue_out_C": round(t_flue_out, 1),
@@ -664,7 +683,9 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
         },
         "condenser": {
             "type": condenser_type,
-            "type_label": "Hava Soğutmalı Kondenser (ACC)" if condenser_type == "air" else "Su Soğutmalı Kondenser (Gövde-Boru)",
+            "type_label": "Hava Soğutmalı Kondenser (ACC)"
+            if condenser_type == "air"
+            else "Su Soğutmalı Kondenser (Gövde-Boru)",
             "warning": condenser_warning,
             "Q_kW": round(q_cond_kw, 2),
             "P_cond_bar": round(p_cond_bar, 2),
@@ -683,7 +704,9 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "W_parasitic_kW": round(w_cond_parasitic_kw, 2),
             "W_fan_kW": round(w_fan_kw, 2),
             "W_cw_pump_kW": round(w_cw_pump_kw, 2),
-            "phase": "Yoğuşma (Kanatçıklı Boru ACC)" if condenser_type == "air" else "Yoğuşma (Su Soğutmalı Gövde-Boru)",
+            "phase": "Yoğuşma (Kanatçıklı Boru ACC)"
+            if condenser_type == "air"
+            else "Yoğuşma (Su Soğutmalı Gövde-Boru)",
         },
         "pump": {
             "W_el_kW": round(w_pump_kw, 2),
@@ -730,6 +753,8 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "thermo_engine": props_exp["engine"],
             "converged": converged,
             "convergence_diff": round(diff, 4),
-            "convergence_warning": None if converged else f"Termal yağ kapalı döngü çözücüsü 30 iterasyonda tam yakınsamadı (kalan fark = {diff:.3f} K).",
+            "convergence_warning": None
+            if converged
+            else f"Termal yağ kapalı döngü çözücüsü 30 iterasyonda tam yakınsamadı (kalan fark = {diff:.3f} K).",
         },
     }

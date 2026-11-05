@@ -45,7 +45,7 @@ def asme_wall_thickness(
         raise MechanicalDesignError("ASME girdileri pozitif olmalıdır (P, R, S, E).")
     if P > 0.385 * S * E:
         raise MechanicalDesignError(
-            f"Basınç (P={P*1e-5:.1f} bar) ASME UG-27 ince cidar sınırını (0.385·S·E = {0.385*S*E*1e-5:.1f} bar) aşıyor; "
+            f"Basınç (P={P * 1e-5:.1f} bar) ASME UG-27 ince cidar sınırını (0.385·S·E = {0.385 * S * E * 1e-5:.1f} bar) aşıyor; "
             "Ek 1 kalın cidar formülleri zorunludur."
         )
     r_calc = R if use_outer_radius else (R + CA)
@@ -325,19 +325,71 @@ def mechanical_design_report(geom: dict) -> list[dict]:
             t_shell = asme_wall_thickness(design_pressure, R_shell, design_stress, joint_eff, ca)
             p_hydro = hydrostatic_test_pressure(design_pressure)
             t_tema_shell = tema_min_shell_thickness(R_shell * 2.0, geom.get("tema_class", "R"))
-            rows.append({"label": "Gövde min. et kalınlığı (ASME UG-27)", "value": f"{t_shell*1000:.2f} mm", "status": "ok", "ok": True})
-            rows.append({"label": "TEMA min. gövde et kalınlığı (Tablo RCB-3.13)", "value": f"{t_tema_shell*1000:.2f} mm", "status": "ok", "ok": True})
-            rows.append({"label": "Hidrostatik test basıncı (1.3×MAWP)", "value": f"{p_hydro/1e6:.2f} MPa", "status": "ok", "ok": True})
+            rows.append(
+                {
+                    "label": "Gövde min. et kalınlığı (ASME UG-27)",
+                    "value": f"{t_shell * 1000:.2f} mm",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
+            rows.append(
+                {
+                    "label": "TEMA min. gövde et kalınlığı (Tablo RCB-3.13)",
+                    "value": f"{t_tema_shell * 1000:.2f} mm",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
+            rows.append(
+                {
+                    "label": "Hidrostatik test basıncı (1.3×MAWP)",
+                    "value": f"{p_hydro / 1e6:.2f} MPa",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
 
             if D_o > 0 and pitch > D_o:
-                t_ts = tema_tubesheet_thickness(design_pressure, R_shell * 2.0, design_stress, pitch, D_o, ca, tema_class=geom.get("tema_class", "R"))
-                rows.append({"label": "Tüp aynası min. kalınlığı (TEMA RCB-7)", "value": f"{t_ts*1000:.2f} mm", "status": "ok", "ok": True})
+                t_ts = tema_tubesheet_thickness(
+                    design_pressure,
+                    R_shell * 2.0,
+                    design_stress,
+                    pitch,
+                    D_o,
+                    ca,
+                    tema_class=geom.get("tema_class", "R"),
+                )
+                rows.append(
+                    {
+                        "label": "Tüp aynası min. kalınlığı (TEMA RCB-7)",
+                        "value": f"{t_ts * 1000:.2f} mm",
+                        "status": "ok",
+                        "ok": True,
+                    }
+                )
 
-            t_ellip = asme_formed_head_thickness(design_pressure, R_shell * 2.0, design_stress, joint_eff, ca, head_type="2:1_ellipsoidal")
-            rows.append({"label": "2:1 Elipsoidal kafa min. kalınlığı (ASME UG-32(d))", "value": f"{t_ellip*1000:.2f} mm", "status": "ok", "ok": True})
+            t_ellip = asme_formed_head_thickness(
+                design_pressure, R_shell * 2.0, design_stress, joint_eff, ca, head_type="2:1_ellipsoidal"
+            )
+            rows.append(
+                {
+                    "label": "2:1 Elipsoidal kafa min. kalınlığı (ASME UG-32(d))",
+                    "value": f"{t_ellip * 1000:.2f} mm",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
 
             t_cover = asme_flat_cover_thickness(design_pressure, R_shell * 2.0, design_stress, joint_eff, ca)
-            rows.append({"label": "Kanal kapağı min. kalınlığı (ASME UG-34)", "value": f"{t_cover*1000:.2f} mm", "status": "ok", "ok": True})
+            rows.append(
+                {
+                    "label": "Kanal kapağı min. kalınlığı (ASME UG-34)",
+                    "value": f"{t_cover * 1000:.2f} mm",
+                    "status": "ok",
+                    "ok": True,
+                }
+            )
         except MechanicalDesignError as exc:
             rows.append({"label": "Gövde et kalınlığı", "value": "—", "status": f"HATA: {exc}", "ok": False})
 
@@ -351,7 +403,7 @@ def mechanical_design_report(geom: dict) -> list[dict]:
             rows.append(
                 {
                     "label": "Boru min. et kalınlığı (ASME UG-27, CA=0)",
-                    "value": f"{t_tube*1000:.2f} mm",
+                    "value": f"{t_tube * 1000:.2f} mm",
                     "status": "ok",
                     "ok": True,
                 }
@@ -384,27 +436,33 @@ def mechanical_design_report(geom: dict) -> list[dict]:
             vcrit = fiv["v_crit"]
             v_ok = not fiv["vortex_resonance_risk"]
             fei_ok = not fiv["fluidelastic_risk"]
-            rows.append({
-                "label": "TEMA Doğal Frekans (fn) / Girdap Frekansı (fv)",
-                "value": f"{fn:.1f} Hz / {fv:.1f} Hz",
-                "status": "OK" if v_ok else "UYARI: Rezonans Riski (0.8 < fv/fn < 1.2)",
-                "ok": v_ok,
-            })
-            rows.append({
-                "label": "TEMA Akışkan-Elastik Kararsızlık (v/vcrit < 1)",
-                "value": f"{v_cross:.2f} m/s (vcrit={vcrit:.2f} m/s)",
-                "status": "OK" if fei_ok else "AŞIM: Dinamik Kararsızlık Riski!",
-                "ok": fei_ok,
-            })
+            rows.append(
+                {
+                    "label": "TEMA Doğal Frekans (fn) / Girdap Frekansı (fv)",
+                    "value": f"{fn:.1f} Hz / {fv:.1f} Hz",
+                    "status": "OK" if v_ok else "UYARI: Rezonans Riski (0.8 < fv/fn < 1.2)",
+                    "ok": v_ok,
+                }
+            )
+            rows.append(
+                {
+                    "label": "TEMA Akışkan-Elastik Kararsızlık (v/vcrit < 1)",
+                    "value": f"{v_cross:.2f} m/s (vcrit={vcrit:.2f} m/s)",
+                    "status": "OK" if fei_ok else "AŞIM: Dinamik Kararsızlık Riski!",
+                    "ok": fei_ok,
+                }
+            )
             if fiv.get("f_a") is not None:
                 fa = fiv["f_a"]
                 ac_ok = not fiv["acoustic_risk"]
-                rows.append({
-                    "label": "TEMA Akustik Rezonans (fa) / Girdap Frekansı (fv)",
-                    "value": f"{fa:.1f} Hz / {fv:.1f} Hz",
-                    "status": "OK" if ac_ok else "UYARI: Akustik Rezonans Riski (0.8 < fv/fa < 1.2)",
-                    "ok": ac_ok,
-                })
+                rows.append(
+                    {
+                        "label": "TEMA Akustik Rezonans (fa) / Girdap Frekansı (fv)",
+                        "value": f"{fa:.1f} Hz / {fv:.1f} Hz",
+                        "status": "OK" if ac_ok else "UYARI: Akustik Rezonans Riski (0.8 < fv/fa < 1.2)",
+                        "ok": ac_ok,
+                    }
+                )
         except Exception as exc:
             rows.append({"label": "TEMA Titreşim Analizi", "value": "—", "status": f"HATA: {exc}", "ok": False})
 
@@ -438,24 +496,28 @@ def mechanical_design_report(geom: dict) -> list[dict]:
     if d_fan > 0 and n_fans > 0 and w_bundle > 0 and l_bundle > 0:
         try:
             cov_ok, cov_val, cov_lim = api661_fan_coverage_check(d_fan, n_fans, w_bundle, l_bundle)
-            rows.append({
-                "label": f"API 661 Fan Kaplama Oranı (Afan/Aface ≥ {cov_lim:.0%})",
-                "value": f"{cov_val:.1%}",
-                "status": "OK" if cov_ok else f"YETERSİZ: {cov_val:.1%} < {cov_lim:.0%}",
-                "ok": cov_ok,
-            })
+            rows.append(
+                {
+                    "label": f"API 661 Fan Kaplama Oranı (Afan/Aface ≥ {cov_lim:.0%})",
+                    "value": f"{cov_val:.1%}",
+                    "status": "OK" if cov_ok else f"YETERSİZ: {cov_val:.1%} < {cov_lim:.0%}",
+                    "ok": cov_ok,
+                }
+            )
         except Exception as exc:
             rows.append({"label": "API 661 Fan Kaplama", "value": "—", "status": f"HATA: {exc}", "ok": False})
     p_fan_kw = float(geom.get("fan_power_kw", 0.0) or 0.0)
     if v_tip > 0 and p_fan_kw > 0:
         try:
             pwl, spl = api661_noise_level(v_tip, p_fan_kw, float(geom.get("noise_distance_m", 1.0) or 1.0))
-            rows.append({
-                "label": "API 661 / GPSA Tahmini Gürültü (SPL @ 1m)",
-                "value": f"{spl:.1f} dB(A) (PWL={pwl:.1f})",
-                "status": "OK" if spl <= 85.0 else f"YÜKSEK: {spl:.1f} > 85 dB(A)",
-                "ok": spl <= 85.0,
-            })
+            rows.append(
+                {
+                    "label": "API 661 / GPSA Tahmini Gürültü (SPL @ 1m)",
+                    "value": f"{spl:.1f} dB(A) (PWL={pwl:.1f})",
+                    "status": "OK" if spl <= 85.0 else f"YÜKSEK: {spl:.1f} > 85 dB(A)",
+                    "ok": spl <= 85.0,
+                }
+            )
         except Exception as exc:
             rows.append({"label": "API 661 Gürültü", "value": "—", "status": f"HATA: {exc}", "ok": False})
 
@@ -469,12 +531,14 @@ def mechanical_design_report(geom: dict) -> list[dict]:
                 fan_efficiency=float(geom.get("eta_fan", 0.65) or 0.65),
                 num_fans=max(1, int(geom.get("num_fans", 1) or 1)),
             )
-            rows.append({
-                "label": "API 661 Fan Mil Gücü (BHP) / Önerilen Motor",
-                "value": f"{fan_res['fan_brake_power_kw']:.1f} kW (Motor ≥ {fan_res['recommended_motor_kw']:.1f} kW)",
-                "status": "OK (API 661 %110 Motor Emniyeti Dahil)",
-                "ok": True,
-            })
+            rows.append(
+                {
+                    "label": "API 661 Fan Mil Gücü (BHP) / Önerilen Motor",
+                    "value": f"{fan_res['fan_brake_power_kw']:.1f} kW (Motor ≥ {fan_res['recommended_motor_kw']:.1f} kW)",
+                    "status": "OK (API 661 %110 Motor Emniyeti Dahil)",
+                    "ok": True,
+                }
+            )
         except Exception as exc:
             rows.append({"label": "API 661 Fan Gücü", "value": "—", "status": f"HATA: {exc}", "ok": False})
     return rows

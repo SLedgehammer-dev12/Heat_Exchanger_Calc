@@ -141,7 +141,9 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
             for cr in [0.0, 1e-12, 1e-7, 0.5, 0.999999, 1.0]:
                 for ntu in [0.0, 0.01, 1.0, 10.0, 100.0]:
                     eps = hx._segment_effectiveness(ntu, cr)
-                    self.assertFalse(math.isnan(eps), f"_segment_effectiveness returned NaN for {flow_type}, cr={cr}, ntu={ntu}")
+                    self.assertFalse(
+                        math.isnan(eps), f"_segment_effectiveness returned NaN for {flow_type}, cr={cr}, ntu={ntu}"
+                    )
                     self.assertTrue(0.0 <= eps <= 1.0)
 
     def test_bowman_shell_passes_not_conflated_with_tube_passes(self):
@@ -154,7 +156,9 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
 
         # Evaluate F via _calc_lmtd_F
         warns = []
-        F_1shell = hx._calc_lmtd_F(T_hot_in=100.0, T_cold_in=20.0, T_hot_out=60.0, T_cold_out=60.0, C_h=1000.0, C_c=1000.0, warnings=warns)
+        F_1shell = hx._calc_lmtd_F(
+            T_hot_in=100.0, T_cold_in=20.0, T_hot_out=60.0, T_cold_out=60.0, C_h=1000.0, C_c=1000.0, warnings=warns
+        )
 
         # In a 1-shell 4-tube pass (N=1), F must equal _bowman_lmtd_factor with N_shell_passes=1
         expected_F = _bowman_lmtd_factor(100.0, 20.0, 60.0, 60.0, C_h=1000.0, C_c=1000.0, N_shell_passes=1)
@@ -173,13 +177,16 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
     def test_orc_pipe_loss_watts_unit_consistency(self):
         """ORC First Law check must deduct pipe loss in Watts, not kW."""
         from orc_system_model import solve_orc_system
-        res = solve_orc_system({
-            "m_flue": 15.0,
-            "T_flue_in": 350.0,
-            "m_oil": 12.0,
-            "delta_T_pipe_loss_C": 5.0,
-            "bypass_ratio": 0.0,
-        })
+
+        res = solve_orc_system(
+            {
+                "m_flue": 15.0,
+                "T_flue_in": 350.0,
+                "m_oil": 12.0,
+                "delta_T_pipe_loss_C": 5.0,
+                "bypass_ratio": 0.0,
+            }
+        )
         self.assertIn("boiler", res)
         self.assertIn("orc", res)
         self.assertGreater(res["boiler"]["Q_kW"], 0.0)
@@ -197,6 +204,7 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
 
         # Mock shoot solver failure to exercise fallback branch
         from unittest.mock import patch
+
         with patch.object(hx, "_segment_effectiveness", side_effect=RuntimeError("root failure")):
             res = hx.solve_segmented(m_hot=1.0, m_cold=1.0, T_hot_in=100.0, T_cold_in=20.0, n_segments=5)
             self.assertIn("warnings", res)
@@ -272,9 +280,7 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
         }
         hot = Fluid("oil", cp=2000.0, density=850.0, mu=0.01, k_cond=0.14)
         cold = Fluid("air", cp=1005.0, density=1.2, mu=1.8e-5, k_cond=0.026)
-        hx = FinTubeHeatExchanger(
-            hot, cold, U=100.0, A=50.0, exchanger_type="finned_tube", flow_type="cross_unmixed"
-        )
+        hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=50.0, exchanger_type="finned_tube", flow_type="cross_unmixed")
         res = hx.calculate_geometric_U(geom, m_hot=2.0, m_cold=5.0)
 
         self.assertIn("api_face_velocity", res)
@@ -484,11 +490,21 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
 
         Pr = 7.0
         warnings = []
-        nu_2200 = hx._nusselt_internal(Re=2200.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings)
-        nu_2300 = hx._nusselt_internal(Re=2300.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings)
-        nu_2650 = hx._nusselt_internal(Re=2650.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings)
-        nu_3000 = hx._nusselt_internal(Re=3000.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings)
-        nu_3500 = hx._nusselt_internal(Re=3500.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings)
+        nu_2200 = hx._nusselt_internal(
+            Re=2200.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings
+        )
+        nu_2300 = hx._nusselt_internal(
+            Re=2300.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings
+        )
+        nu_2650 = hx._nusselt_internal(
+            Re=2650.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings
+        )
+        nu_3000 = hx._nusselt_internal(
+            Re=3000.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings
+        )
+        nu_3500 = hx._nusselt_internal(
+            Re=3500.0, Pr=Pr, n_factor=0.3, laminar_nu=4.36, side_name="test", warnings=warnings
+        )
 
         # nu_2200 should equal laminar Nu
         self.assertAlmostEqual(nu_2200, 4.36, places=2)
@@ -610,10 +626,14 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
 
             warnings = []
             # Test transition range (2600)
-            nu_trans = hx._nusselt_internal(Re=2600.0, Pr=7.0, n_factor=0.3, laminar_nu=4.36, side_name="tube", warnings=warnings)
+            nu_trans = hx._nusselt_internal(
+                Re=2600.0, Pr=7.0, n_factor=0.3, laminar_nu=4.36, side_name="tube", warnings=warnings
+            )
             self.assertGreater(nu_trans, 4.36)
             # Test turbulent range (15000)
-            nu_turb = hx._nusselt_internal(Re=15000.0, Pr=7.0, n_factor=0.3, laminar_nu=4.36, side_name="tube", warnings=warnings)
+            nu_turb = hx._nusselt_internal(
+                Re=15000.0, Pr=7.0, n_factor=0.3, laminar_nu=4.36, side_name="tube", warnings=warnings
+            )
             self.assertGreater(nu_turb, 50.0)
         finally:
             heat_exchanger.HT_AVAILABLE = orig_available
@@ -655,6 +675,7 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
     def test_correlations_temperature_cross_warning(self):
         """Bowman LMTD factor must flag warning and return 0.01 on temperature cross P >= 1.0."""
         from correlations import _bowman_lmtd_factor
+
         warnings = []
         # T_hot_in=100, T_cold_in=20, T_cold_out=110 -> P = (110-20)/(100-20) = 90/80 = 1.125 >= 1.0
         f_cross = _bowman_lmtd_factor(
@@ -672,6 +693,7 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
     def test_therminol66_vapor_pressure_and_darcy(self):
         """Verify Therminol 66 temperature-dependent Antoine VP and Darcy pipe helper."""
         from orc_system_model import calc_pipe_darcy, therminol66_vapor_pressure
+
         vp_100 = therminol66_vapor_pressure(100.0)
         vp_300 = therminol66_vapor_pressure(300.0)
         self.assertGreater(vp_300, vp_100)
@@ -696,7 +718,10 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
     def test_api661_fan_power_check(self):
         """Verify API 661 fan power sizing and compliance table integration."""
         from mechanical import api661_fan_power_check, mechanical_design_report
-        res = api661_fan_power_check(v_air_m3_s=25.0, dp_static_pa=150.0, fan_efficiency=0.65, drive_efficiency=0.95, num_fans=2)
+
+        res = api661_fan_power_check(
+            v_air_m3_s=25.0, dp_static_pa=150.0, fan_efficiency=0.65, drive_efficiency=0.95, num_fans=2
+        )
         self.assertAlmostEqual(res["air_power_kw"], 3.75, delta=0.01)
         self.assertAlmostEqual(res["fan_brake_power_kw"], 3.75 / (0.65 * 0.95), delta=0.1)
         self.assertAlmostEqual(res["recommended_motor_kw"], res["fan_brake_power_kw"] * 1.10, delta=0.1)
@@ -712,9 +737,16 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
         import openpyxl
 
         from reporting import export_calculation_excel
+
         context = {
             "inputs": {"m_hot_kg_s": 10.0, "T_hot_in_C": 300.0, "m_cold_kg_s": 12.0, "T_cold_in_C": 180.0},
-            "orc_data": {"n_boilers": 3, "m_oil": 36.0, "pipe_dn_sel": "DN150", "pipe_di_mm": 154.0, "pipe_length_m": 75.0},
+            "orc_data": {
+                "n_boilers": 3,
+                "m_oil": 36.0,
+                "pipe_dn_sel": "DN150",
+                "pipe_di_mm": 154.0,
+                "pipe_length_m": 75.0,
+            },
         }
         xlsx_bytes = export_calculation_excel(context)
         wb = openpyxl.load_workbook(BytesIO(xlsx_bytes))
@@ -725,6 +757,7 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
     def test_orc_schematic_telemetry_and_asme(self):
         """ORC schematic HTML must contain ASME UG-27, boiler pinch telemetry and latestCalcResult hook."""
         from orc_schematic_component import get_orc_schematic_html
+
         html = get_orc_schematic_html()
         self.assertIn("ASME UG-27 Cidar Kalınlığı", html)
         self.assertIn("Kazan Pinch Farkı (ΔT_pinch)", html)

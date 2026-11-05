@@ -28,43 +28,49 @@ def run_scenario_matrix():
     for n_b in [1, 2, 3]:
         for m_flue in [8.0, 12.0, 16.0, 20.0, 25.0, 30.0, 35.0, 40.0]:
             scenario_id += 1
-            scenarios.append({
-                "id": scenario_id,
-                "category": "Flue Gas Sensitivity",
-                "params": {
-                    "n_boilers": n_b,
-                    "m_flue_1": m_flue,
-                    "condenser_type": "water",
-                    "bypass_ratio": 0.0,
+            scenarios.append(
+                {
+                    "id": scenario_id,
+                    "category": "Flue Gas Sensitivity",
+                    "params": {
+                        "n_boilers": n_b,
+                        "m_flue_1": m_flue,
+                        "condenser_type": "water",
+                        "bypass_ratio": 0.0,
+                    },
                 }
-            })
+            )
 
     # Matrix 2: Thermal Oil Split Sweep (split from 0.05 to 0.95) across dual WHRU
     for split in [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95]:
         scenario_id += 1
-        scenarios.append({
-            "id": scenario_id,
-            "category": "Oil Split Hydraulic Sensitivity",
-            "params": {
-                "n_boilers": 2,
-                "split_oil_whru": split,
-                "condenser_type": "water",
-                "bypass_ratio": 0.0,
+        scenarios.append(
+            {
+                "id": scenario_id,
+                "category": "Oil Split Hydraulic Sensitivity",
+                "params": {
+                    "n_boilers": 2,
+                    "split_oil_whru": split,
+                    "condenser_type": "water",
+                    "bypass_ratio": 0.0,
+                },
             }
-        })
+        )
 
     # Matrix 3: Bypass Ratio Sweep (0% to 100%)
     for bp in [0.0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
         scenario_id += 1
-        scenarios.append({
-            "id": scenario_id,
-            "category": "Bypass Valve Regulation",
-            "params": {
-                "n_boilers": 2,
-                "bypass_ratio": bp,
-                "condenser_type": "water",
+        scenarios.append(
+            {
+                "id": scenario_id,
+                "category": "Bypass Valve Regulation",
+                "params": {
+                    "n_boilers": 2,
+                    "bypass_ratio": bp,
+                    "condenser_type": "water",
+                },
             }
-        })
+        )
 
     # Matrix 4: Condenser Type Comparison (Water vs Air-Cooled ACC) across ambient temperatures
     for c_type in ["water", "air"]:
@@ -81,11 +87,7 @@ def run_scenario_matrix():
             else:
                 p["T_cw_in"] = min(35.0, t_amb)
                 p["P_cond_bar"] = 1.5
-            scenarios.append({
-                "id": scenario_id,
-                "category": f"Condenser {c_type.upper()}",
-                "params": p
-            })
+            scenarios.append({"id": scenario_id, "category": f"Condenser {c_type.upper()}", "params": p})
 
     # Matrix 5: Multi-Boiler Scalability (1, 2, 3, 4, 5 boilers) with asymmetric loads
     for n_b in [1, 2, 3, 4, 5]:
@@ -93,37 +95,43 @@ def run_scenario_matrix():
             scenario_id += 1
             boilers_cfg = []
             for i in range(n_b):
-                boilers_cfg.append({
-                    "m_flue": 16.0 + i * 2.0,
-                    "T_flue_in": flue_t,
-                    "UA": 32.0,
-                    "split": 1.0 / n_b,
-                })
-            scenarios.append({
-                "id": scenario_id,
-                "category": f"{n_b}-Boiler Train",
-                "params": {
-                    "n_boilers": n_b,
-                    "boilers": boilers_cfg,
-                    "condenser_type": "water" if n_b % 2 == 0 else "air",
+                boilers_cfg.append(
+                    {
+                        "m_flue": 16.0 + i * 2.0,
+                        "T_flue_in": flue_t,
+                        "UA": 32.0,
+                        "split": 1.0 / n_b,
+                    }
+                )
+            scenarios.append(
+                {
+                    "id": scenario_id,
+                    "category": f"{n_b}-Boiler Train",
+                    "params": {
+                        "n_boilers": n_b,
+                        "boilers": boilers_cfg,
+                        "condenser_type": "water" if n_b % 2 == 0 else "air",
+                    },
                 }
-            })
+            )
 
     # Matrix 6: Cyclopentane Cycle Pressure Variations (P_evap from 10 to 24 bar)
     for p_evap in [10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0]:
         for m_cp in [8.0, 11.5, 15.0]:
             scenario_id += 1
-            scenarios.append({
-                "id": scenario_id,
-                "category": "ORC Cycle Parameters",
-                "params": {
-                    "n_boilers": 2,
-                    "P_evap_bar": p_evap,
-                    "m_cp": m_cp,
-                    "m_cp_kg_s": m_cp,
-                    "condenser_type": "water",
+            scenarios.append(
+                {
+                    "id": scenario_id,
+                    "category": "ORC Cycle Parameters",
+                    "params": {
+                        "n_boilers": 2,
+                        "P_evap_bar": p_evap,
+                        "m_cp": m_cp,
+                        "m_cp_kg_s": m_cp,
+                        "condenser_type": "water",
+                    },
                 }
-            })
+            )
 
     total_scenarios = len(scenarios)
     print(f"Total Scenarios Generated: {total_scenarios} (Target >= 100: PASS)")
@@ -154,7 +162,9 @@ def run_scenario_matrix():
 
         if not first_law_ok:
             first_law_violations += 1
-            print(f"❌ FIRST LAW VIOLATION in #{s_id}: Q_boiler={q_boiler:.2f} kW, Q_ORC={q_orc:.2f} kW, Bypass={bypass:.2f}")
+            print(
+                f"❌ FIRST LAW VIOLATION in #{s_id}: Q_boiler={q_boiler:.2f} kW, Q_ORC={q_orc:.2f} kW, Bypass={bypass:.2f}"
+            )
 
         # 2. Check m_flue monotonic increase
         if cat == "Flue Gas Sensitivity":
@@ -183,18 +193,20 @@ def run_scenario_matrix():
             assert cond["W_parasitic_kW"] >= 0
             assert "m_cw_kg_s" in cond
 
-        results.append({
-            "id": s_id,
-            "category": cat,
-            "n_boilers": res["boiler"]["n_boilers"],
-            "Q_boiler_kW": q_boiler,
-            "Q_orc_kW": q_orc,
-            "W_net_kW": w_net,
-            "W_turb_kW": w_turb,
-            "cond_type": c_type,
-            "cond_w_parasitic_kW": cond["W_parasitic_kW"],
-            "first_law_ok": first_law_ok,
-        })
+        results.append(
+            {
+                "id": s_id,
+                "category": cat,
+                "n_boilers": res["boiler"]["n_boilers"],
+                "Q_boiler_kW": q_boiler,
+                "Q_orc_kW": q_orc,
+                "W_net_kW": w_net,
+                "W_turb_kW": w_turb,
+                "cond_type": c_type,
+                "cond_w_parasitic_kW": cond["W_parasitic_kW"],
+                "first_law_ok": first_law_ok,
+            }
+        )
 
     # Summary Statistics
     q_boilers = [r["Q_boiler_kW"] for r in results]
@@ -205,11 +217,19 @@ def run_scenario_matrix():
     print("📊 100+ SCENARIO VALIDATION REPORT & METRICS")
     print("=" * 80)
     print(f"Total Scenarios Evaluated       : {len(results)}")
-    print(f"First Law Violations (Q_b < Q_orc): {first_law_violations} (0 REQUIRED -> {'✅ PASS' if first_law_violations == 0 else '❌ FAIL'})")
-    print(f"Flue Gas Sensitivity Anomalies   : {m_flue_sensitivity_failures} (0 REQUIRED -> {'✅ PASS' if m_flue_sensitivity_failures == 0 else '❌ FAIL'})")
-    print(f"Hydraulic Split Anomalies        : {hydraulic_failures} (0 REQUIRED -> {'✅ PASS' if hydraulic_failures == 0 else '❌ FAIL'})")
+    print(
+        f"First Law Violations (Q_b < Q_orc): {first_law_violations} (0 REQUIRED -> {'✅ PASS' if first_law_violations == 0 else '❌ FAIL'})"
+    )
+    print(
+        f"Flue Gas Sensitivity Anomalies   : {m_flue_sensitivity_failures} (0 REQUIRED -> {'✅ PASS' if m_flue_sensitivity_failures == 0 else '❌ FAIL'})"
+    )
+    print(
+        f"Hydraulic Split Anomalies        : {hydraulic_failures} (0 REQUIRED -> {'✅ PASS' if hydraulic_failures == 0 else '❌ FAIL'})"
+    )
     print("-" * 80)
-    print(f"Q_boiler Range (min / mean / max): {np.min(q_boilers):.1f} / {np.mean(q_boilers):.1f} / {np.max(q_boilers):.1f} kW")
+    print(
+        f"Q_boiler Range (min / mean / max): {np.min(q_boilers):.1f} / {np.mean(q_boilers):.1f} / {np.max(q_boilers):.1f} kW"
+    )
     print(f"Q_ORC Range    (min / mean / max): {np.min(q_orcs):.1f} / {np.mean(q_orcs):.1f} / {np.max(q_orcs):.1f} kW")
     print(f"W_net Range    (min / mean / max): {np.min(w_nets):.1f} / {np.mean(w_nets):.1f} / {np.max(w_nets):.1f} kW")
     print("=" * 80)
@@ -219,13 +239,17 @@ def run_scenario_matrix():
     water_samples = [r for r in results if r["cond_type"] == "water" and r["category"].startswith("Condenser")]
 
     print("\n🔬 CONDENSER PARASITIC COMPARISON (WATER vs. ACC):")
-    print(f"{'Condition':<25} | {'Water W_pump (kW)':<18} | {'ACC W_fan (kW)':<18} | {'Parasitic Ratio (ACC/Water)':<20}")
+    print(
+        f"{'Condition':<25} | {'Water W_pump (kW)':<18} | {'ACC W_fan (kW)':<18} | {'Parasitic Ratio (ACC/Water)':<20}"
+    )
     print("-" * 85)
     for w_s, a_s in zip(water_samples[:5], acc_samples[:5], strict=False):
         ratio = a_s["cond_w_parasitic_kW"] / max(0.01, w_s["cond_w_parasitic_kW"])
-        print(f"Case {w_s['id']} vs {a_s['id']:<18} | {w_s['cond_w_parasitic_kW']:<18.2f} | {a_s['cond_w_parasitic_kW']:<18.2f} | {ratio:<20.2f}x")
+        print(
+            f"Case {w_s['id']} vs {a_s['id']:<18} | {w_s['cond_w_parasitic_kW']:<18.2f} | {a_s['cond_w_parasitic_kW']:<18.2f} | {ratio:<20.2f}x"
+        )
 
-    all_passed = (first_law_violations == 0 and m_flue_sensitivity_failures == 0 and hydraulic_failures == 0)
+    all_passed = first_law_violations == 0 and m_flue_sensitivity_failures == 0 and hydraulic_failures == 0
     return all_passed
 
 

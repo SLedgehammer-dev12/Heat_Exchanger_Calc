@@ -11,6 +11,9 @@ BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+if sys.platform.startswith("linux") and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
@@ -179,7 +182,9 @@ def build_fluid_from_selection(selection, fluid_data, mixture_data, mixture_basi
         fluid.property_source = mix.get("property_source")
         return fluid
     resolved_mu = fluid_data["mu"] if fluid_data.get("mu") is not None and fluid_data.get("mu") > 0 else mu
-    resolved_k = fluid_data["k_cond"] if fluid_data.get("k_cond") is not None and fluid_data.get("k_cond") > 0 else k_cond
+    resolved_k = (
+        fluid_data["k_cond"] if fluid_data.get("k_cond") is not None and fluid_data.get("k_cond") > 0 else k_cond
+    )
     fluid = Fluid(
         name=fluid_data["name"],
         cp=fluid_data.get("cp", 1000.0),
@@ -278,17 +283,30 @@ def compute_desktop_calculation(snapshot):
             hot_data = materialize_fluid_data(get_fluid_data(snapshot["hot_selection"]), T_hot_mid)
             cold_data = materialize_fluid_data(get_fluid_data(snapshot["cold_selection"]), T_cold_mid)
             hot_fluid = build_fluid_from_selection(
-                snapshot["hot_selection"], hot_data, snapshot["hot_mixture_data"],
-                snapshot["hot_mixture_basis"], T_hot_mid, snapshot["mu_hot"], snapshot["k_hot"],
+                snapshot["hot_selection"],
+                hot_data,
+                snapshot["hot_mixture_data"],
+                snapshot["hot_mixture_basis"],
+                T_hot_mid,
+                snapshot["mu_hot"],
+                snapshot["k_hot"],
             )
             cold_fluid = build_fluid_from_selection(
-                snapshot["cold_selection"], cold_data, snapshot["cold_mixture_data"],
-                snapshot["cold_mixture_basis"], T_cold_mid, snapshot["mu_cold"], snapshot["k_cold"],
+                snapshot["cold_selection"],
+                cold_data,
+                snapshot["cold_mixture_data"],
+                snapshot["cold_mixture_basis"],
+                T_cold_mid,
+                snapshot["mu_cold"],
+                snapshot["k_cold"],
             )
             _m_hot = to_kg_s(snapshot["m_hot_raw"], snapshot["m_hot_unit"], hot_fluid.density)
             _m_cold = to_kg_s(snapshot["m_cold_raw"], snapshot["m_cold_unit"], cold_fluid.density)
             _hx = FinTubeHeatExchanger(
-                hot_fluid, cold_fluid, U=1.0, A=1.0,
+                hot_fluid,
+                cold_fluid,
+                U=1.0,
+                A=1.0,
                 flow_type=snapshot["flow_type"],
                 exchanger_type=snapshot.get("exchanger_type", "finned_tube"),
             )
@@ -306,7 +324,6 @@ def compute_desktop_calculation(snapshot):
         m_hot, m_cold, hx, crosscheck_results = hx.solve_with_refinement(m_hot, m_cold, T_hot, T_cold, _rebuild)
         res_custom, res_custom_lmtd, res_ht, res_lmtd = crosscheck_results
         geo_res = holder["geo_res"]
-
 
     try:
         crosscheck_results.append(hx.solve_segmented(m_hot, m_cold, T_hot, T_cold, n_segments=10))
@@ -998,9 +1015,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.btn_export_datasheet.hide()
 
         self.btn_export_csv = QPushButton("📊 Excel / CSV Tablo Dışa Aktar")
-        self.btn_export_csv.setStyleSheet(
-            "background-color: #27ae60; color: white; padding: 8px; font-weight: bold;"
-        )
+        self.btn_export_csv.setStyleSheet("background-color: #27ae60; color: white; padding: 8px; font-weight: bold;")
         self.btn_export_csv.clicked.connect(self.export_csv)
         res_layout.addWidget(self.btn_export_csv)
         self.btn_export_csv.hide()
@@ -1061,7 +1076,9 @@ class HeatExchangerDesktopApp(QMainWindow):
         )
         orc_layout.addWidget(orc_info)
         btn_open_orc = QPushButton("🌐 Canlı ORC P&ID Şemasını Aç (Etkileşimli SVG/DOM)")
-        btn_open_orc.setStyleSheet("font-size: 13px; font-weight: bold; padding: 8px; background-color: #0f3a5d; color: white; border-radius: 4px;")
+        btn_open_orc.setStyleSheet(
+            "font-size: 13px; font-weight: bold; padding: 8px; background-color: #0f3a5d; color: white; border-radius: 4px;"
+        )
         btn_open_orc.clicked.connect(self.open_orc_schematic)
         orc_layout.addWidget(btn_open_orc)
         orc_layout.addStretch()
@@ -1077,7 +1094,9 @@ class HeatExchangerDesktopApp(QMainWindow):
         )
         layout_3d.addWidget(info_3d)
         btn_open_3d = QPushButton("🔬 3D Teardown Modelini Başlat (WebGL)")
-        btn_open_3d.setStyleSheet("font-size: 13px; font-weight: bold; padding: 8px; background-color: #10b981; color: white; border-radius: 4px;")
+        btn_open_3d.setStyleSheet(
+            "font-size: 13px; font-weight: bold; padding: 8px; background-color: #10b981; color: white; border-radius: 4px;"
+        )
         btn_open_3d.clicked.connect(self.open_3d_viewer)
         layout_3d.addWidget(btn_open_3d)
         layout_3d.addStretch()

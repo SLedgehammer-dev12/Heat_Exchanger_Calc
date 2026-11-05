@@ -19,12 +19,7 @@ def parse_po(file_path):
     def unescape_po(s):
         parts = re.findall(r'"((?:[^"\\]|\\.)*)"', s)
         joined = "".join(parts)
-        return (
-            joined.replace("\\n", "\n")
-            .replace("\\t", "\t")
-            .replace('\\"', '"')
-            .replace("\\\\", "\\")
-        )
+        return joined.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
 
     for match in pattern.finditer(content):
         raw_id = match.group(1)

@@ -215,8 +215,16 @@ class TestSchmidtPlateFin(unittest.TestCase):
     def test_plate_fin_efficiency_in_range(self):
         from heat_exchanger import _fin_efficiency
 
-        eta = _fin_efficiency("plate", h_o=100.0, k_fin=237.0, fin_thickness=0.0004, fin_height=0.0159, D_o=0.0254,
-                              pitch=0.06, pitch_parallel=0.06)
+        eta = _fin_efficiency(
+            "plate",
+            h_o=100.0,
+            k_fin=237.0,
+            fin_thickness=0.0004,
+            fin_height=0.0159,
+            D_o=0.0254,
+            pitch=0.06,
+            pitch_parallel=0.06,
+        )
         self.assertGreaterEqual(eta, 0.0)
         self.assertLessEqual(eta, 1.0)
 
@@ -387,9 +395,17 @@ class TestSiederTateAndNozzle(unittest.TestCase):
         cold = Fluid("Soğuk Su", cp=4180, density=995, mu=8e-4, k_cond=0.62)
         hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=5.0, flow_type="counter", exchanger_type="shell_and_tube")
         geom = {
-            "D_o": 0.019, "D_i": 0.014, "L": 3.0, "N_tubes": 20, "k_wall": 45.0,
-            "D_shell": 0.25, "baffle_spacing": 0.3, "baffle_cut": 0.25,
-            "tube_layout_angle": "30", "shell_passes": 1, "tube_passes": 1,
+            "D_o": 0.019,
+            "D_i": 0.014,
+            "L": 3.0,
+            "N_tubes": 20,
+            "k_wall": 45.0,
+            "D_shell": 0.25,
+            "baffle_spacing": 0.3,
+            "baffle_cut": 0.25,
+            "tube_layout_angle": "30",
+            "shell_passes": 1,
+            "tube_passes": 1,
         }
         res = hx.calculate_geometric_U(geom, 0.5, 1.0, hot_is_tube=False)
         self.assertGreater(res["delta_p_shell"], 0)
@@ -404,8 +420,16 @@ class TestBellDelaware(unittest.TestCase):
     def test_bell_delaware_factors_bounded(self):
         from heat_exchanger import _bell_delaware_shell_h
 
-        h_o, j = _bell_delaware_shell_h(Nu_ideal=80.0, k_shell=0.62, D_o=0.019, D_shell=0.25,
-                                        baffle_cut=0.25, tube_count=40, L=3.0, baffle_spacing=0.3)
+        h_o, j = _bell_delaware_shell_h(
+            Nu_ideal=80.0,
+            k_shell=0.62,
+            D_o=0.019,
+            D_shell=0.25,
+            baffle_cut=0.25,
+            tube_count=40,
+            L=3.0,
+            baffle_spacing=0.3,
+        )
         self.assertGreater(h_o, 0)
         for key in ("J_c", "J_l", "J_b", "J_s", "J_r"):
             self.assertGreaterEqual(j[key], 0.5)
@@ -418,9 +442,17 @@ class TestBellDelaware(unittest.TestCase):
         cold = Fluid("Soğuk Su", cp=4180, density=995, mu=8e-4, k_cond=0.62)
         hx = FinTubeHeatExchanger(hot, cold, U=100.0, A=5.0, flow_type="counter", exchanger_type="shell_and_tube")
         geom = {
-            "D_o": 0.019, "D_i": 0.014, "L": 3.0, "N_tubes": 40, "k_wall": 45.0,
-            "D_shell": 0.25, "baffle_spacing": 0.3, "baffle_cut": 0.25,
-            "tube_layout_angle": "30", "shell_passes": 1, "tube_passes": 1,
+            "D_o": 0.019,
+            "D_i": 0.014,
+            "L": 3.0,
+            "N_tubes": 40,
+            "k_wall": 45.0,
+            "D_shell": 0.25,
+            "baffle_spacing": 0.3,
+            "baffle_cut": 0.25,
+            "tube_layout_angle": "30",
+            "shell_passes": 1,
+            "tube_passes": 1,
         }
         res = hx.calculate_geometric_U(geom, 0.5, 1.0, hot_is_tube=False)
         self.assertGreater(res["h_o"], 0)

@@ -197,7 +197,7 @@ DEFAULT_STATE = {
     "pipe_length_m": 80.0,
 }
 
-ENGINEERING_PRESETS = {
+ENGINEERING_PRESETS: dict[str, dict[str, Any]] = {
     "tema_water_water": {
         "title": "🏢 Su - Su (TEMA Gövde-Boru)",
         "desc": "Endüstriyel proses soğutma: Ters akış, 2 geçişli boru demeti.",
@@ -495,11 +495,11 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
         kpi5.metric("📐 Efektif Alan (A)", f"{Area:.2f} m²")
         kpi6.metric("🔄 Toplam U", f"{U_value:.1f} W/m²K")
         if geo_res:
-            kpi7.metric("Boru ΔP", f"{geo_res.get('delta_p_tube', 0)/1000.0:.2f} kPa")
-            kpi8.metric("Gövde/Hava ΔP", f"{geo_res.get('delta_p_shell', 0)/1000.0:.2f} kPa")
+            kpi7.metric("Boru ΔP", f"{geo_res.get('delta_p_tube', 0) / 1000.0:.2f} kPa")
+            kpi8.metric("Gövde/Hava ΔP", f"{geo_res.get('delta_p_shell', 0) / 1000.0:.2f} kPa")
         elif res_actual:
             kpi7.metric("Gereken U", f"{res_actual.get('U_required', 0):.1f} W/m²K")
-            kpi8.metric("Gerçek ε", f"%{res_actual.get('epsilon_actual', 0)*100:.1f}")
+            kpi8.metric("Gerçek ε", f"%{res_actual.get('epsilon_actual', 0) * 100:.1f}")
         else:
             kpi7.metric("LMTD", f"{res_main.get('LMTD', 0):.1f} °C")
             kpi8.metric("F Faktörü", f"{res_main.get('F', 1.0):.3f}")
@@ -551,24 +551,30 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
         # 1D Segmented Finite-Volume Detailed Distribution Expander
         seg_res = next((r for r in crosscheck_results if "Segmented" in r.get("Method", "")), None)
         if seg_res and "T_h_profile" in seg_res and "T_c_profile" in seg_res:
-            with st.expander("🔬 1D Sayısal Dilimli (Finite-Volume) Eksenel Sıcaklık ve Yerel ΔT Dağılımı", expanded=False):
+            with st.expander(
+                "🔬 1D Sayısal Dilimli (Finite-Volume) Eksenel Sıcaklık ve Yerel ΔT Dağılımı", expanded=False
+            ):
                 th_prof = seg_res["T_h_profile"]
                 tc_prof = seg_res["T_c_profile"]
-                dt_prof = seg_res.get("dT_local_profile", [round(h - c, 2) for h, c in zip(th_prof, tc_prof, strict=True)])
+                dt_prof = seg_res.get(
+                    "dT_local_profile", [round(h - c, 2) for h, c in zip(th_prof, tc_prof, strict=True)]
+                )
                 min_dt = seg_res.get("min_dT_local [C]", min(dt_prof) if dt_prof else 0.0)
                 n_seg = len(th_prof) - 1
 
                 col_s1, col_s2, col_s3 = st.columns(3)
                 col_s1.metric("Bölüntü Sayısı", f"{n_seg} Dilim")
                 col_s2.metric("Min Yerel Yaklaşım (ΔT_min)", f"{min_dt:.2f} °C")
-                col_s3.metric("Segmentli Isı Yükü", f"{seg_res['Q [W]']/1000.0:.2f} kW")
+                col_s3.metric("Segmentli Isı Yükü", f"{seg_res['Q [W]'] / 1000.0:.2f} kW")
 
-                df_seg = pd.DataFrame({
-                    "Konum (x/L %)": [f"%{int(i * 100 / n_seg)}" for i in range(len(th_prof))],
-                    "Sıcak Akışkan T_h (°C)": th_prof,
-                    "Soğuk Akışkan T_c (°C)": tc_prof,
-                    "Yerel Sıcaklık Farkı ΔT (°C)": dt_prof,
-                })
+                df_seg = pd.DataFrame(
+                    {
+                        "Konum (x/L %)": [f"%{int(i * 100 / n_seg)}" for i in range(len(th_prof))],
+                        "Sıcak Akışkan T_h (°C)": th_prof,
+                        "Soğuk Akışkan T_c (°C)": tc_prof,
+                        "Yerel Sıcaklık Farkı ΔT (°C)": dt_prof,
+                    }
+                )
                 st.dataframe(df_seg, use_container_width=True)
 
         # Mechanical & Standards Verification (ASME UG-27, TEMA RCB-7, ASME UG-34, TEMA FIV)
@@ -598,11 +604,11 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
                             f"""
                             <div style="background:#ffffff; border:1px solid #e2e8f0; border-left:4px solid {badge_color}; border-radius:6px; padding:10px 14px; margin-bottom:8px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="font-weight:600; font-size:13px; color:#1e293b;">{r['label']}</span>
+                                    <span style="font-weight:600; font-size:13px; color:#1e293b;">{r["label"]}</span>
                                     <span style="font-size:11px; font-weight:700; color:{badge_color}; background:#f1f5f9; padding:2px 8px; border-radius:4px;">{badge}</span>
                                 </div>
-                                <div style="font-size:15px; font-weight:700; color:#0f3a5d; margin-top:4px;">{r['value']}</div>
-                                <div style="font-size:11.5px; color:#64748b; margin-top:2px;">Durum: <i>{r['status']}</i></div>
+                                <div style="font-size:15px; font-weight:700; color:#0f3a5d; margin-top:4px;">{r["value"]}</div>
+                                <div style="font-size:11.5px; color:#64748b; margin-top:2px;">Durum: <i>{r["status"]}</i></div>
                             </div>
                             """,
                             unsafe_allow_html=True,
@@ -682,7 +688,9 @@ def _render_calc_results(data, tab_results, tab_crosscheck, tab_log):
 
     with tab_crosscheck:
         st.markdown("### 🔍 Çözücü Algoritmaları Çapraz Doğrulama (Cross-Check)")
-        st.caption("Farklı analitik çözücüler (Kendi Algoritmamız Epsilon-NTU, LMTD ve 'ht' Kütüphanesi) aynı girdilerle koşturulup sonuçların tutarlılığı kıyaslanır:")
+        st.caption(
+            "Farklı analitik çözücüler (Kendi Algoritmamız Epsilon-NTU, LMTD ve 'ht' Kütüphanesi) aynı girdilerle koşturulup sonuçların tutarlılığı kıyaslanır:"
+        )
         if pychemengg_warning:
             st.info(pychemengg_warning)
         df = pd.DataFrame([crosscheck_row(r, reference_q=res_main["Q [W]"]) for r in crosscheck_results])
@@ -1123,12 +1131,17 @@ tab_config, tab_geom, tab_results, tab_orc, tab_crosscheck, tab_log = st.tabs(
 
 with tab_config:
     st.markdown("### ⚙️ Eşanjör & Tesis Konfigürasyonu")
-    st.caption("Termodinamik çözücü mimarisi, akışkan özellikleri, WHRU Atık Isı Kazanları, TEMA S&T ve ORC çevrim parametreleri.")
+    st.caption(
+        "Termodinamik çözücü mimarisi, akışkan özellikleri, WHRU Atık Isı Kazanları, TEMA S&T ve ORC çevrim parametreleri."
+    )
 
     cfg_col1, cfg_col2 = st.columns(2)
 
     with cfg_col1:
-        st.markdown('<div class="side-card-header hot">⚙️ Atık Isı Baca Kazanı (WHRU) Mimarisi & Çözücü Yöntemi</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header hot">⚙️ Atık Isı Baca Kazanı (WHRU) Mimarisi & Çözücü Yöntemi</div>',
+            unsafe_allow_html=True,
+        )
         exch_type_label = st.selectbox(
             "Eşanjör Tipi",
             options=EXCH_TYPE_OPTIONS,
@@ -1204,7 +1217,10 @@ with tab_config:
             h_fg = float(get_val("h_fg") or 2_200_000)
 
         # Sıcak Akışkan (Hot Side)
-        st.markdown('<div class="side-card-header hot" style="margin-top:16px;">🔴 Sıcak Akışkan (Hot Side)</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header hot" style="margin-top:16px;">🔴 Sıcak Akışkan (Hot Side)</div>',
+            unsafe_allow_html=True,
+        )
         hot_fluid_sel = st.selectbox(
             "Akışkan Seçimi (Hot)",
             options=fluid_list,
@@ -1247,7 +1263,7 @@ with tab_config:
                 <div class="fluid-prop-bar">
                     <span class="fluid-prop-pill">Cp: <b>{cp_hot:.0f} J/kgK</b></span>
                     <span class="fluid-prop-pill">ρ: <b>{density_hot:.1f} kg/m³</b></span>
-                    <span class="fluid-prop-pill">μ: <b>{mu_hot*1000:.2f} cP</b></span>
+                    <span class="fluid-prop-pill">μ: <b>{mu_hot * 1000:.2f} cP</b></span>
                     <span class="fluid-prop-pill">k: <b>{k_hot:.3f} W/mK</b></span>
                 </div>
                 """,
@@ -1274,7 +1290,10 @@ with tab_config:
             )
 
         # Soğuk Akışkan (Cold Side)
-        st.markdown('<div class="side-card-header cold" style="margin-top:16px;">🔵 Soğuk Akışkan (Cold Side)</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header cold" style="margin-top:16px;">🔵 Soğuk Akışkan (Cold Side)</div>',
+            unsafe_allow_html=True,
+        )
         cold_fluid_sel = st.selectbox(
             "Akışkan Seçimi (Cold)",
             options=fluid_list,
@@ -1317,7 +1336,7 @@ with tab_config:
                 <div class="fluid-prop-bar">
                     <span class="fluid-prop-pill">Cp: <b>{cp_cold:.0f} J/kgK</b></span>
                     <span class="fluid-prop-pill">ρ: <b>{density_cold:.1f} kg/m³</b></span>
-                    <span class="fluid-prop-pill">μ: <b>{mu_cold*1000:.2f} cP</b></span>
+                    <span class="fluid-prop-pill">μ: <b>{mu_cold * 1000:.2f} cP</b></span>
                     <span class="fluid-prop-pill">k: <b>{k_cold:.3f} W/mK</b></span>
                 </div>
                 """,
@@ -1344,7 +1363,10 @@ with tab_config:
             )
 
     with cfg_col2:
-        st.markdown('<div class="side-card-header cold">🛢️ Kızgın Yağ & Siklopentan S&T Eşanjörü (Therminol 66 / ORC)</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header cold">🛢️ Kızgın Yağ & Siklopentan S&T Eşanjörü (Therminol 66 / ORC)</div>',
+            unsafe_allow_html=True,
+        )
 
         st_tema_options = [
             "K (Kettle Reboiler Evaporatör - Genişletilmiş Kubbeli)",
@@ -1471,7 +1493,10 @@ with tab_config:
         )
 
         # Superheater (SH) Hot Oil Inlet Temperature & Pipeline Heat Loss
-        st.markdown('<div class="side-card-header hot">🔥 Siklopentan Aşırı Kızdırıcı (SH) Yağ Giriş Sıcaklığı & Hat Isı Kaybı</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header hot">🔥 Siklopentan Aşırı Kızdırıcı (SH) Yağ Giriş Sıcaklığı & Hat Isı Kaybı</div>',
+            unsafe_allow_html=True,
+        )
         sh_oil_modes = [
             "🔗 Otomatik (Kazan Çıkışıyla Aynı)",
             "✏️ Manuel Giriş (°C)",
@@ -1494,6 +1519,7 @@ with tab_config:
         )
 
         c_sh1, c_sh2 = st.columns(2)
+        sh_t_oil_in_manual: float | None = None
         if "Manuel" in sh_t_oil_in_mode:
             sh_t_oil_in_manual = c_sh1.number_input(
                 "SH Yağ Giriş Sıcaklığı T_oil,SH,in (°C)",
@@ -1521,10 +1547,15 @@ with tab_config:
         else:
             sh_t_oil_in_manual = None
             sh_pipe_loss_c = 0.0
-            st.caption("🔗 SH giriş sıcaklığı, Atık Isı Kazanları çıkış manifold sıcaklığına (T_supply) eşit kabul edilir (ΔT = 0 °C).")
+            st.caption(
+                "🔗 SH giriş sıcaklığı, Atık Isı Kazanları çıkış manifold sıcaklığına (T_supply) eşit kabul edilir (ΔT = 0 °C)."
+            )
 
         # Kızgın Yağ Dağıtım Boru Hattı Hidroliği (Darcy-Weisbach)
-        st.markdown('<div class="side-card-header hot">🔄 Kızgın Yağ Dağıtım Hattı Borulaması (Darcy-Weisbach)</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header hot">🔄 Kızgın Yağ Dağıtım Hattı Borulaması (Darcy-Weisbach)</div>',
+            unsafe_allow_html=True,
+        )
         c_pipe1, c_pipe2 = st.columns(2)
         pipe_dn_options = [
             "DN80 (Di=82.5 mm)",
@@ -1573,10 +1604,16 @@ with tab_config:
         c_pipe2.caption("⚡ Darcy-Weisbach ve Swamee-Jain formülleriyle hat sürtünmesi ve pompa tüketimi hesaplanır.")
 
         # ORC Condenser
-        st.markdown('<div class="side-card-header cold">❄️ ORC Kondenseri (Yoğuşturucu) Tipi & Soğutma Kaynağı</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="side-card-header cold">❄️ ORC Kondenseri (Yoğuşturucu) Tipi & Soğutma Kaynağı</div>',
+            unsafe_allow_html=True,
+        )
         condenser_type_label = st.selectbox(
             "Kondenser Soğutma Tipi",
-            options=["💧 Su Soğutmalı Kondenser (Su Kulesi / Shell & Tube)", "💨 Hava Soğutmalı Kondenser (Air-Cooled Condenser - ACC)"],
+            options=[
+                "💧 Su Soğutmalı Kondenser (Su Kulesi / Shell & Tube)",
+                "💨 Hava Soğutmalı Kondenser (Air-Cooled Condenser - ACC)",
+            ],
             index=0 if get_val("condenser_type", "air") == "water" else 1,
             key="cfg_condenser_type",
             help="ORC türbin çıkışındaki buharın yoğuşturulmasında kullanılacak soğutma yöntemi",
@@ -1685,18 +1722,50 @@ current_data = {
     "density_cold": density_cold,
     "mu_cold": mu_cold,
     "k_cold": k_cold,
-    "m_oil": to_kg_s(m_cold_raw if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else m_hot_raw, u_m_cold if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else u_m_hot, density_cold if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else density_hot),
-    "m_cp": to_kg_s(m_cold_raw, u_m_cold, density_cold) if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]) else 11.5,
-    "T_cp_in": T_cold_in if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]) else (55.0 if is_acc else 45.0),
+    "m_oil": to_kg_s(
+        m_cold_raw
+        if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"])
+        else m_hot_raw,
+        u_m_cold
+        if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"])
+        else u_m_hot,
+        density_cold
+        if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"])
+        else density_hot,
+    ),
+    "m_cp": to_kg_s(m_cold_raw, u_m_cold, density_cold)
+    if any(
+        k in str(cold_fluid_sel)
+        for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]
+    )
+    else 11.5,
+    "T_cp_in": T_cold_in
+    if any(
+        k in str(cold_fluid_sel)
+        for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "R1233", "Toluene", "Siklopentan"]
+    )
+    else (55.0 if is_acc else 45.0),
     "n_boilers": int(st.session_state.get("cfg_n_boilers", 2) or 2),
-    "m_flue": to_kg_s(m_hot_raw, u_m_hot, density_hot) if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
+    "m_flue": to_kg_s(m_hot_raw, u_m_hot, density_hot)
+    if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"])
+    else None,
     "T_flue_in": T_hot_in if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
     "flue_gas_cp": cp_hot if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
-    "flue_gas_rho": density_hot if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
+    "flue_gas_rho": density_hot
+    if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"])
+    else None,
     "flue_gas_mu": mu_hot if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
     "flue_gas_k": k_hot if any(k in str(hot_fluid_sel) for k in ["Egzoz", "Flue", "Gaz", "Gas", "Air"]) else None,
-    "oil_fluid_sel": cold_fluid_sel if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else (hot_fluid_sel if any(k in str(hot_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"]) else None),
-    "orc_fluid_sel": cold_fluid_sel if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "Toluene"]) else None,
+    "oil_fluid_sel": cold_fluid_sel
+    if any(k in str(cold_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"])
+    else (
+        hot_fluid_sel
+        if any(k in str(hot_fluid_sel) for k in ["Therminol", "Dowtherm", "Mobiltherm", "Calflo", "Yağ", "Oil"])
+        else None
+    ),
+    "orc_fluid_sel": cold_fluid_sel
+    if any(k in str(cold_fluid_sel) for k in ["Cyclopentane", "Pentane", "Butane", "R245fa", "R134a", "Toluene"])
+    else None,
     "P_evap_bar": st_shell_p_des,
     "P_cond_bar": 2.0 if is_acc else 1.5,
     "U_value": float(get_val("U_value", 500.0) or 500.0),
@@ -1741,7 +1810,9 @@ with tab_geom:
     N_tubes = int(get_val("N_tubes") or 100)
 
     if u_calc_mode == U_MODE_OPTIONS[0]:
-        st.info("ℹ️ Basit modda toplam ısı transfer katsayısı (U) ve ısı transfer alanı (A) doğrudan kullanıcı girdisi olarak alınır.")
+        st.info(
+            "ℹ️ Basit modda toplam ısı transfer katsayısı (U) ve ısı transfer alanı (A) doğrudan kullanıcı girdisi olarak alınır."
+        )
         c_u1, c_u2 = st.columns(2)
         with c_u1:
             U_value = st.number_input(
@@ -1760,11 +1831,16 @@ with tab_geom:
         current_data["U_value"] = U_value
         current_data["Area"] = Area
     else:
-        st.success("Geometrik mod aktif: U katsayısı ve ısı transfer alanı boru/gövde geometrisi üzerinden hesaplanacaktır.")
+        st.success(
+            "Geometrik mod aktif: U katsayısı ve ısı transfer alanı boru/gövde geometrisi üzerinden hesaplanacaktır."
+        )
         g1, g2, g3 = st.columns(3)
 
         with g1:
-            st.markdown('<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">📏 Boru Boyutları</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">📏 Boru Boyutları</div>',
+                unsafe_allow_html=True,
+            )
             bwg_labels = ["Manuel"] + [p["label"] for p in _bwg_presets]
             bwg_sel = st.selectbox(
                 "Boru Preseti (BWG)",
@@ -1797,7 +1873,10 @@ with tab_geom:
             current_data.update({"L_m": L_m, "N_tubes": N_tubes})
 
         with g2:
-            st.markdown('<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">🛡️ Malzeme &amp; Gövde</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">🛡️ Malzeme &amp; Gövde</div>',
+                unsafe_allow_html=True,
+            )
             mat_options = {f"{k} (k={v:.1f})": v for k, v in TUBE_MATERIALS.items()}
             # Önceki kayıtlarda k değeri formatsız olabilir, isim bazlı eşleştirme:
             curr_mat = get_val("tube_material")
@@ -1818,13 +1897,17 @@ with tab_geom:
             if FLOW_MAP[flow_type].startswith("cross"):
                 pitch_mm = st.number_input("Transverse Pitch (mm)", value=float(get_val("pitch_mm")))
                 if pitch_mm <= D_o_mm:
-                    st.error(f"⚠️ Geometri Hatası: Hatve/Pitch ({pitch_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!")
+                    st.error(
+                        f"⚠️ Geometri Hatası: Hatve/Pitch ({pitch_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!"
+                    )
                 geom_dict["pitch"] = pitch_mm / 1000.0
                 current_data["pitch_mm"] = pitch_mm
             else:
                 D_shell_mm = st.number_input("Gövde İç Çapı (mm)", value=float(get_val("D_shell_mm")))
                 if D_shell_mm <= D_o_mm:
-                    st.error(f"⚠️ Geometri Hatası: Gövde iç çapı ({D_shell_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!")
+                    st.error(
+                        f"⚠️ Geometri Hatası: Gövde iç çapı ({D_shell_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!"
+                    )
                 geom_dict["D_shell"] = D_shell_mm / 1000.0
                 current_data["D_shell_mm"] = D_shell_mm
 
@@ -1834,7 +1917,9 @@ with tab_geom:
                         value=float(get_val("pitch_mm") or round(D_o_mm * 1.25, 2)),
                     )
                     if pitch_mm <= D_o_mm:
-                        st.error(f"⚠️ Geometri Hatası: Hatve/Pitch ({pitch_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!")
+                        st.error(
+                            f"⚠️ Geometri Hatası: Hatve/Pitch ({pitch_mm:.1f} mm) boru dış çapından ({D_o_mm:.1f} mm) büyük olmalıdır!"
+                        )
                     geom_dict["pitch"] = pitch_mm / 1000.0
                     current_data["pitch_mm"] = pitch_mm
 
@@ -1842,7 +1927,10 @@ with tab_geom:
                         "Deflektör Aralığı (mm)", value=float(get_val("baffle_spacing_mm") or 200.0)
                     )
                     baffle_cut = st.number_input(
-                        "Deflektör Kesim Oranı", value=float(get_val("baffle_cut") or 0.25), min_value=0.0, max_value=0.5
+                        "Deflektör Kesim Oranı",
+                        value=float(get_val("baffle_cut") or 0.25),
+                        min_value=0.0,
+                        max_value=0.5,
                     )
                     layout_angle = st.selectbox(
                         "Yerleşim Açısı",
@@ -1905,7 +1993,10 @@ with tab_geom:
             current_data["R_f_o"] = R_f_o
 
         with g3:
-            st.markdown('<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">🪶 Kanatçıklar (Fins)</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="side-card-header" style="background:#f1f5f9; color:#0f3a5d; border-left:4px solid #0f3a5d;">🪶 Kanatçıklar (Fins)</div>',
+                unsafe_allow_html=True,
+            )
             if not FLOW_MAP[flow_type].startswith("cross"):
                 st.caption(
                     "Kanatçık alanı özellikle çapraz akış/finned tube ön tasarımı için anlamlıdır; counter/parallel modda hesaba katılmaz."
@@ -1961,7 +2052,9 @@ with tab_geom:
 
     # ASME Section VIII Div 1 & TEMA Mechanical Parameters (WEB-1.1)
     with st.expander("🛡️ ASME Sec VIII & TEMA Mekanik Tasarım Parametreleri", expanded=False):
-        st.caption("Basınçlı kap et kalınlığı (ASME UG-27, UG-34) ve TEMA boru aynası / titreşim doğrulamaları için parametreler:")
+        st.caption(
+            "Basınçlı kap et kalınlığı (ASME UG-27, UG-34) ve TEMA boru aynası / titreşim doğrulamaları için parametreler:"
+        )
         m1, m2, m3 = st.columns(3)
         with m1:
             P_design_bar = st.number_input(
@@ -2005,13 +2098,15 @@ with tab_geom:
         geom_dict["corrosion_allowance"] = CA_mm / 1000.0
         geom_dict["joint_efficiency"] = float(joint_eff_str.split()[0])
         geom_dict["tema_class"] = tema_class_str.split()[0]
-        current_data.update({
-            "P_design_bar": P_design_bar,
-            "S_stress_mpa": S_stress_mpa,
-            "CA_mm": CA_mm,
-            "joint_eff_str": joint_eff_str,
-            "tema_class_str": tema_class_str,
-        })
+        current_data.update(
+            {
+                "P_design_bar": P_design_bar,
+                "S_stress_mpa": S_stress_mpa,
+                "CA_mm": CA_mm,
+                "joint_eff_str": joint_eff_str,
+                "tema_class_str": tema_class_str,
+            }
+        )
 
     # 2D Tubesheet Tube Layout Preview (WEB-1.5)
     if exch_type_internal == "shell_and_tube":
@@ -2019,9 +2114,10 @@ with tab_geom:
             st.caption(
                 f"TEMA Boru Aynası Yerleşim Geometrisi: {layout_angle}° açılı hatve, "
                 f"Gövde İç Çapı = {D_shell_mm:.1f} mm, Do = {D_o_mm:.1f} mm, "
-                f"Pitch = {geom_dict.get('pitch', D_o_mm*1.25/1000.0)*1000.0:.1f} mm | {tube_passes} Geçiş"
+                f"Pitch = {geom_dict.get('pitch', D_o_mm * 1.25 / 1000.0) * 1000.0:.1f} mm | {tube_passes} Geçiş"
             )
             from tubesheet_component import generate_tubesheet_svg
+
             ts_pitch = geom_dict.get("pitch", (D_o_mm * 1.25) / 1000.0) * 1000.0
             ts_svg = generate_tubesheet_svg(
                 D_shell_mm=D_shell_mm,
@@ -2047,7 +2143,7 @@ with tab_orc:
         st.success(
             f"🔗 **Hesap Birliği Aktif:** Tab 1 / Tab 2'de tasarlanan eşanjör geometrisi "
             f"(U = **{current_data['U_value']:.1f} W/m²K**, A = **{current_data['Area']:.1f} m²** "
-            f"➜ UA = **{(current_data['U_value']*current_data['Area']/1000.0):.1f} kW/K**) "
+            f"➜ UA = **{(current_data['U_value'] * current_data['Area'] / 1000.0):.1f} kW/K**) "
             f"ve Darcy-Weisbach boru hattı parametreleri (**{pipe_dn_sel}**, L = **{pipe_length_m:.0f} m**) canlı P&ID simülasyonuna entegre edilmiştir."
         )
     else:
@@ -2122,7 +2218,7 @@ else:
         validation_errors.append("Boru iç ve dış çapları sıfırdan büyük olmalıdır.")
     elif d_i >= d_o:
         validation_errors.append(
-            f"Boru dış çapı ({d_o*1000.0:.1f} mm), iç çapından ({d_i*1000.0:.1f} mm) büyük olmalıdır."
+            f"Boru dış çapı ({d_o * 1000.0:.1f} mm), iç çapından ({d_i * 1000.0:.1f} mm) büyük olmalıdır."
         )
     if l_tube <= 0:
         validation_errors.append("Boru uzunluğu (L) sıfırdan büyük olmalıdır.")
@@ -2133,12 +2229,12 @@ else:
     pitch = geom_dict.get("pitch", 0.0)
     if pitch > 0 and pitch <= d_o:
         validation_errors.append(
-            f"Boru hatvesi ({pitch*1000.0:.1f} mm), boru dış çapından ({d_o*1000.0:.1f} mm) büyük olmalıdır."
+            f"Boru hatvesi ({pitch * 1000.0:.1f} mm), boru dış çapından ({d_o * 1000.0:.1f} mm) büyük olmalıdır."
         )
     d_shell = geom_dict.get("D_shell", 0.0)
     if d_shell > 0 and d_shell <= d_o:
         validation_errors.append(
-            f"Gövde iç çapı ({d_shell*1000.0:.1f} mm), boru dış çapından ({d_o*1000.0:.1f} mm) büyük olmalıdır."
+            f"Gövde iç çapı ({d_shell * 1000.0:.1f} mm), boru dış çapından ({d_o * 1000.0:.1f} mm) büyük olmalıdır."
         )
 
 # 5. İki-Fazlı (Kondenser / Evaporatör) Kontrolleri
@@ -2153,10 +2249,22 @@ if is_cond_chk or is_evap_chk:
         validation_errors.append("Aşırı soğutma derecesi (subcooling) negatif olamaz.")
 
 # 6. Manuel Akışkan Termofiziksel Özellik Kontrolleri
-if not hot_data.get("is_coolprop") and not hot_data.get("is_iapws") and (cp_hot <= 0 or density_hot <= 0 or mu_hot <= 0 or k_hot <= 0):
-    validation_errors.append("Sıcak akışkan manuel termofiziksel özellikleri (cp, rho, mu, k) sıfırdan büyük olmalıdır.")
-if not cold_data.get("is_coolprop") and not cold_data.get("is_iapws") and (cp_cold <= 0 or density_cold <= 0 or mu_cold <= 0 or k_cold <= 0):
-    validation_errors.append("Soğuk akışkan manuel termofiziksel özellikleri (cp, rho, mu, k) sıfırdan büyük olmalıdır.")
+if (
+    not hot_data.get("is_coolprop")
+    and not hot_data.get("is_iapws")
+    and (cp_hot <= 0 or density_hot <= 0 or mu_hot <= 0 or k_hot <= 0)
+):
+    validation_errors.append(
+        "Sıcak akışkan manuel termofiziksel özellikleri (cp, rho, mu, k) sıfırdan büyük olmalıdır."
+    )
+if (
+    not cold_data.get("is_coolprop")
+    and not cold_data.get("is_iapws")
+    and (cp_cold <= 0 or density_cold <= 0 or mu_cold <= 0 or k_cold <= 0)
+):
+    validation_errors.append(
+        "Soğuk akışkan manuel termofiziksel özellikleri (cp, rho, mu, k) sıfırdan büyük olmalıdır."
+    )
 
 # 7. WHRU ve Süperkızdırıcı (SH) Yağ Giriş Kontrolleri
 t_sh_override_val = current_data.get("orc_sh_t_oil_in_override_c")
@@ -2213,7 +2321,9 @@ with c_act_info:
     elif "calc_cache" in st.session_state:
         _q_val = st.session_state.calc_cache["res_main"].get("Q [W]", 0.0) / 1000.0
         _eps = st.session_state.calc_cache["res_main"].get("epsilon", 0.0) * 100.0
-        st.info(f"💡 **Son Hesaplama:** Q = **{_q_val:.1f} kW** | ε = **%{_eps:.1f}** — Detaylı analiz ve föyler için **'📊 Sonuçlar'** sekmesini açabilirsiniz.")
+        st.info(
+            f"💡 **Son Hesaplama:** Q = **{_q_val:.1f} kW** | ε = **%{_eps:.1f}** — Detaylı analiz ve föyler için **'📊 Sonuçlar'** sekmesini açabilirsiniz."
+        )
     else:
         st.caption("ℹ️ Girdilerinizi tamamladıktan sonra hesaplamayı başlatmak için 'HESAPLA' butonuna basın.")
 
@@ -2339,7 +2449,10 @@ if not hata_var and run_calc:
                     _m_hot = to_kg_s(m_hot_raw, u_m_hot, _hf.density)
                     _m_cold = to_kg_s(m_cold_raw, u_m_cold, _cf.density)
                     _hx = FinTubeHeatExchanger(
-                        _hf, _cf, U=1.0, A=1.0,
+                        _hf,
+                        _cf,
+                        U=1.0,
+                        A=1.0,
                         flow_type=FLOW_MAP[flow_type],
                         exchanger_type=exch_type_internal,
                     )
@@ -2481,4 +2594,6 @@ else:
         )
     with tab_log:
         st.markdown("### 📝 Sistem Logları")
-        st.info("ℹ️ Termodinamik ve hidrolik çözücülerin ayrıntılı yürütme logları hesaplama başlatıldığında burada listelenecektir.")
+        st.info(
+            "ℹ️ Termodinamik ve hidrolik çözücülerin ayrıntılı yürütme logları hesaplama başlatıldığında burada listelenecektir."
+        )

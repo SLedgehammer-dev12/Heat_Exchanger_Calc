@@ -61,7 +61,7 @@ LOCAL_LOSS_VELOCITY_HEADS_PER_PASS = 4.0
 # TEMA RCB-4.62 giriş nozulu momentum akısı limitleri [kg/(m·s^2)]
 TEMA_RHO_V2_LIMIT = 2230.0  # Standart tek fazlı temiz gaz ve sıvılar (1500 lb/(ft·s^2) karşılığı)
 TEMA_RHO_V2_LIMIT_STANDARD = 2230.0  # kg/(m·s^2)
-TEMA_RHO_V2_LIMIT_EROSIVE = 740.0   # kg/(m·s^2) — kaynayan sıvılar, iki faz veya aşındırıcı akış (500 lb/(ft·s^2))
+TEMA_RHO_V2_LIMIT_EROSIVE = 740.0  # kg/(m·s^2) — kaynayan sıvılar, iki faz veya aşındırıcı akış (500 lb/(ft·s^2))
 MAX_UNSUPPORTED_SPAN_FACTOR = 60.0  # baffle_spacing / D_o üst sınır (ön tarama)
 
 # Sieder-Tate çeper viskozite düzeltmesi: h *= (mu_b / mu_w)^0.14

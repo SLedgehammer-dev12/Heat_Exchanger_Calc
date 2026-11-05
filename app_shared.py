@@ -9,9 +9,7 @@ FLOW_LABEL_TO_INTERNAL: dict[str, str] = {
     "Paralel Akış (Parallel Flow)": "parallel",
     "Çapraz Akış (Mixed/Unmixed)": "cross_mixed_unmixed",
 }
-FLOW_INTERNAL_TO_LABEL: dict[str, str] = {
-    value: key for key, value in FLOW_LABEL_TO_INTERNAL.items()
-}
+FLOW_INTERNAL_TO_LABEL: dict[str, str] = {value: key for key, value in FLOW_LABEL_TO_INTERNAL.items()}
 
 # Eşanjör tipi etiket eşleştirmeleri
 EXCHANGER_LABEL_TO_INTERNAL: dict[str, str] = {
@@ -19,9 +17,7 @@ EXCHANGER_LABEL_TO_INTERNAL: dict[str, str] = {
     "Gövde-Boru (Shell & Tube)": "shell_and_tube",
     "Çift Borulu (Double Pipe)": "double_pipe",
 }
-EXCHANGER_INTERNAL_TO_LABEL: dict[str, str] = {
-    value: key for key, value in EXCHANGER_LABEL_TO_INTERNAL.items()
-}
+EXCHANGER_INTERNAL_TO_LABEL: dict[str, str] = {value: key for key, value in EXCHANGER_LABEL_TO_INTERNAL.items()}
 
 # Gaz karışım hazır şablonları (bileşen yüzdeleri)
 MIXTURE_PRESETS: dict[str, dict[str, float]] = {

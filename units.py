@@ -108,4 +108,3 @@ def from_celsius(val, unit):
     if u is None and unit is not None:
         logger.warning("Bilinmeyen sıcaklık birimi '%s', ham değer dönülüyor.", unit)
     return v
-

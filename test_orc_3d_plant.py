@@ -14,11 +14,11 @@ class TestOrc3DPlantComponent(unittest.TestCase):
         html = orc_3d_plant_component.get_orc_3d_plant_container_html()
         self.assertIn('id="container_3d"', html)
         self.assertIn('id="canvas_3d_mount"', html)
-        self.assertIn('btn-3d-cam', html)
+        self.assertIn("btn-3d-cam", html)
         self.assertIn('id="hud_3d_card"', html)
-        self.assertIn('🎥 İzometrik', html)
-        self.assertIn('📐 Üstten P&ID', html)
-        self.assertIn('⚡ Türbin Odak', html)
+        self.assertIn("🎥 İzometrik", html)
+        self.assertIn("📐 Üstten P&ID", html)
+        self.assertIn("⚡ Türbin Odak", html)
 
     def test_3d_plant_js_structure(self):
         """JavaScript module must contain 3D scene builders, foundation, pipe racks, and animations."""
@@ -54,19 +54,19 @@ class TestOrc3DPlantComponent(unittest.TestCase):
         html = orc_schematic_component.get_orc_schematic_html({"n_boilers": 3})
         self.assertIn('id="btn_view_2d"', html)
         self.assertIn('id="btn_view_3d"', html)
-        self.assertIn('switchViewMode', html)
+        self.assertIn("switchViewMode", html)
         self.assertIn('id="container_3d"', html)
         self.assertIn('id="schematic_svg"', html)
-        self.assertIn('three.min.js', html)
-        self.assertIn('OrbitControls.js', html)
-        self.assertIn('updatePlant3D', html)
+        self.assertIn("three.min.js", html)
+        self.assertIn("OrbitControls.js", html)
+        self.assertIn("updatePlant3D", html)
 
     def test_standalone_3d_plant_html(self):
         """Standalone 3D plant HTML page must be self-contained."""
         html = orc_3d_plant_component.get_standalone_3d_plant_html({"n_boilers": 4})
-        self.assertIn('<!DOCTYPE html>', html)
+        self.assertIn("<!DOCTYPE html>", html)
         self.assertIn('id="canvas_3d_mount"', html)
-        self.assertIn('init3DPlant()', html)
+        self.assertIn("init3DPlant()", html)
 
     def test_latest_calc_result_caching_and_scoping(self):
         """updatePlant3D must cache latestCalcResult even before 3D is initialized."""
@@ -139,9 +139,9 @@ class TestOrc3DPlantComponent(unittest.TestCase):
 
         # Sleeper routing avoiding vessel clashes
         self.assertIn("-13.5", js)  # Sleeper corridor offset avoiding PH saddle
-        self.assertIn("31.8", js)   # P-101 pump suction nozzle avoiding motor
-        self.assertIn("38.5", js)   # Channel head liquid inlet avoiding shell mid-span
-        self.assertIn("9.8", js)    # Overhead vapor bridge avoiding SH crown
+        self.assertIn("31.8", js)  # P-101 pump suction nozzle avoiding motor
+        self.assertIn("38.5", js)  # Channel head liquid inlet avoiding shell mid-span
+        self.assertIn("9.8", js)  # Overhead vapor bridge avoiding SH crown
         self.assertIn("-21.5", js)  # Dedicated north corridor for PH->SH vapor bridge
 
     def test_sh_pipe_separation_and_v101_upstream_pump_tie_in(self):
@@ -264,25 +264,17 @@ class TestOrc3DPlantComponent(unittest.TestCase):
                 dz = pts[i + 1][2] - pts[i][2]
                 seg_len = math.sqrt(dx * dx + dy * dy + dz * dz)
                 # Every segment must be >= 1.1m (> max rBend 0.8m) to prevent spool inversion
-                self.assertGreaterEqual(
-                    seg_len, 1.05, f"Segment {i} in {name} is too short ({seg_len:.2f}m < 1.05m)"
-                )
+                self.assertGreaterEqual(seg_len, 1.05, f"Segment {i} in {name} is too short ({seg_len:.2f}m < 1.05m)")
                 # Every segment must be strictly axis-aligned (only 1 non-zero component)
                 non_zero_axes = sum(1 for c in (dx, dy, dz) if abs(c) > 1e-4)
-                self.assertEqual(
-                    non_zero_axes, 1, f"Segment {i} in {name} is not orthogonal: {(dx, dy, dz)}"
-                )
+                self.assertEqual(non_zero_axes, 1, f"Segment {i} in {name} is not orthogonal: {(dx, dy, dz)}")
                 dirs.append((dx / seg_len, dy / seg_len, dz / seg_len))
 
             # Consecutive segments must make a clean 90-degree turn (dot product == 0)
             for i in range(len(dirs) - 1):
-                dot = (
-                    dirs[i][0] * dirs[i + 1][0]
-                    + dirs[i][1] * dirs[i + 1][1]
-                    + dirs[i][2] * dirs[i + 1][2]
-                )
+                dot = dirs[i][0] * dirs[i + 1][0] + dirs[i][1] * dirs[i + 1][1] + dirs[i][2] * dirs[i + 1][2]
                 self.assertAlmostEqual(
-                    dot, 0.0, places=4, msg=f"Corner {i+1} in {name} is not a 90° turn (dot={dot})"
+                    dot, 0.0, places=4, msg=f"Corner {i + 1} in {name} is not a 90° turn (dot={dot})"
                 )
 
     def test_whru_boiler_count_2d_3d_sync_and_bright_lighting(self):

@@ -123,5 +123,3 @@ def ache_fin_options() -> list[dict]:
 def ache_fin_names() -> list[str]:
     """API 661 kanat tipi isim listesini döndürür."""
     return list(API661_FIN_TYPES.keys())
-
-

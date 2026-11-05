@@ -238,9 +238,15 @@ def build_calculation_report(context):
         _add_mapping(
             lines,
             {
-                "Sıcak taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_hot [W]') / 1000, 4)} kW" if actual_result.get("Q_hot [W]") is not None else "-",
-                "Soğuk taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_cold [W]') / 1000, 4)} kW" if actual_result.get("Q_cold [W]") is not None else "-",
-                "Ortalama Q": f"{_fmt(actual_result.get('Q_avg [W]') / 1000, 4)} kW" if actual_result.get("Q_avg [W]") is not None else "-",
+                "Sıcak taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_hot [W]') / 1000, 4)} kW"
+                if actual_result.get("Q_hot [W]") is not None
+                else "-",
+                "Soğuk taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_cold [W]') / 1000, 4)} kW"
+                if actual_result.get("Q_cold [W]") is not None
+                else "-",
+                "Ortalama Q": f"{_fmt(actual_result.get('Q_avg [W]') / 1000, 4)} kW"
+                if actual_result.get("Q_avg [W]") is not None
+                else "-",
                 "Gerçekleşen epsilon": _fmt(actual_result.get("epsilon_actual"), 6),
                 "Gereken U": f"{_fmt(actual_result.get('U_required'), 4)} W/m2.K",
                 "LMTD": f"{_fmt(actual_result.get('LMTD'), 4)} K",
@@ -344,7 +350,13 @@ def build_calculation_report_pdf(context):
     note = ParagraphStyle("Note", parent=body, fontSize=7.5, leading=10, textColor=colors.HexColor("#666666"))
 
     def p(text, style=cell):
-        safe = str(text if text is not None else "-").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("  ", "&nbsp;&nbsp;")
+        safe = (
+            str(text if text is not None else "-")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("  ", "&nbsp;&nbsp;")
+        )
         return Paragraph(safe, style)
 
     def hr():
@@ -864,7 +876,12 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
             p(f"{_fmt(tube_fluid.get('density'), 2)}"),
             p(f"{_fmt(shell_fluid.get('density'), 2)}"),
         ],
-        [p("Özgül Isı (Cp)"), p("J/kg·K"), p(f"{_fmt(tube_fluid.get('cp'), 1)}"), p(f"{_fmt(shell_fluid.get('cp'), 1)}")],
+        [
+            p("Özgül Isı (Cp)"),
+            p("J/kg·K"),
+            p(f"{_fmt(tube_fluid.get('cp'), 1)}"),
+            p(f"{_fmt(shell_fluid.get('cp'), 1)}"),
+        ],
         [
             p("Isıl İletkenlik (k)"),
             p("W/m·K"),
@@ -874,8 +891,8 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
         [
             p("Dinamik Viskozite"),
             p("cP"),
-            p(f"{_fmt(tube_fluid.get('mu') * 1000 if tube_fluid.get('mu') else None, 3)}"),
-            p(f"{_fmt(shell_fluid.get('mu') * 1000 if shell_fluid.get('mu') else None, 3)}"),
+            p(f"{_fmt((tube_fluid.get('mu') or 0.0) * 1000 if tube_fluid.get('mu') else None, 3)}"),
+            p(f"{_fmt((shell_fluid.get('mu') or 0.0) * 1000 if shell_fluid.get('mu') else None, 3)}"),
         ],
         [
             p("Fouling Isıl Direnci (R_f)"),
@@ -911,7 +928,10 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
         [
             p("Efektif Isı Transfer Alanı (A)"),
             p("m²"),
-            p(f"<b>{_fmt(actual_result.get('A_total') or selected.get('A') or geo_result.get('A_total'), 2)} m²</b>", cell_bold),
+            p(
+                f"<b>{_fmt(actual_result.get('A_total') or selected.get('A') or geo_result.get('A_total'), 2)} m²</b>",
+                cell_bold,
+            ),
             p(f"Yüzey Verimi (η_o): {_fmt((actual_result.get('eta_o') or geo_result.get('eta_o') or 1.0) * 100, 1)}%"),
         ],
     ]
@@ -1005,7 +1025,11 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
             p("Kanat Boyutları (Yüks. × Kal. × Sıklık)"),
             p("-"),
             p(f"Y:{fin_h_mm:.1f}mm, K:{fin_t_mm:.2f}mm, {fin_dens:.0f} fpm" if is_finned else "-"),
-            p(f"Kanat Verimi: η_f = {(actual_result.get('eta_fin') or geo_result.get('eta_fin') or 1.0):.3f}" if is_finned else "-"),
+            p(
+                f"Kanat Verimi: η_f = {(actual_result.get('eta_fin') or geo_result.get('eta_fin') or 1.0):.3f}"
+                if is_finned
+                else "-"
+            ),
         ],
         [
             p("Tasarım / Hidrostatik Test Basıncı"),
@@ -1130,8 +1154,18 @@ def export_calculation_csv(context: dict) -> str:
         ("Overall U (Calculated)", actual.get("U") or selected.get("U") or geo.get("U"), "W/m2.K"),
         ("Required U", actual.get("U_required") or selected.get("U_required"), "W/m2.K"),
         ("Heat Transfer Area (A)", actual.get("A_total") or selected.get("A") or geo.get("A_total"), "m2"),
-        ("Tube-side Pressure Drop", actual.get("delta_p_tube_kPa") or (geo.get("delta_p_tube") / 1000.0 if geo.get("delta_p_tube") else None), "kPa"),
-        ("Shell/Air-side Pressure Drop", actual.get("delta_p_shell_kPa") or (geo.get("delta_p_shell") / 1000.0 if geo.get("delta_p_shell") else None), "kPa"),
+        (
+            "Tube-side Pressure Drop",
+            actual.get("delta_p_tube_kPa")
+            or ((geo.get("delta_p_tube") or 0.0) / 1000.0 if geo.get("delta_p_tube") else None),
+            "kPa",
+        ),
+        (
+            "Shell/Air-side Pressure Drop",
+            actual.get("delta_p_shell_kPa")
+            or ((geo.get("delta_p_shell") or 0.0) / 1000.0 if geo.get("delta_p_shell") else None),
+            "kPa",
+        ),
         ("Inside HTC (h_i)", actual.get("h_i") or geo.get("h_i"), "W/m2.K"),
         ("Outside HTC (h_o)", actual.get("h_o") or geo.get("h_o"), "W/m2.K"),
         ("Fin Efficiency (eta_fin)", actual.get("eta_fin") or geo.get("eta_fin"), "-"),
@@ -1170,15 +1204,11 @@ def export_profile_csv(profile_data_or_context) -> str:
 
     writer.writerow(["Segment", "Length_Fraction", "T_hot_C", "T_cold_C", "Delta_T_C"])
 
-    t_h = []
-    t_c = []
+    t_h: list[float] = []
+    t_c: list[float] = []
     if isinstance(profile_data_or_context, dict):
         results_dict = profile_data_or_context.get("results") or {}
-        res = (
-            profile_data_or_context.get("actual_result")
-            or results_dict.get("main")
-            or profile_data_or_context
-        )
+        res = profile_data_or_context.get("actual_result") or results_dict.get("main") or profile_data_or_context
         t_h = res.get("T_h_profile") or []
         t_c = res.get("T_c_profile") or []
         if not t_h and "inputs" in profile_data_or_context:
@@ -1297,14 +1327,49 @@ def export_calculation_excel(context: dict) -> bytes:
         ("Etkinlik (ε)", selected.get("epsilon", 0.0), "-", "ε = Q / Q_max"),
         ("LMTD", selected.get("LMTD") or actual.get("LMTD", 0.0), "°C", lmtd_formula),
         ("Düzeltme Faktörü (F)", selected.get("F") or actual.get("F", 1.0), "-", "Bowman / Crossflow F-Factor"),
-        ("Toplam Isı Transfer Katsayısı (U)", actual.get("U") or selected.get("U") or geo.get("U", 0.0), "W/m²·K", "1 / (1/h_i + R_f_i + R_wall + R_f_o + 1/h_o)"),
-        ("Gerekli Isı Transfer Alanı (A_req)", actual.get("A_required") or selected.get("A_required", 0.0), "m²", "Q / (U * F * LMTD)"),
-        ("Mevcut Isı Transfer Alanı (A_actual)", actual.get("A_total") or selected.get("A") or geo.get("A_total", 0.0), "m²", "N * π * Do * L"),
-        ("Termal Aşım Oranı (Margin)", None, "%", f"=(B{row+7}-B{row+6})/MAX(0.001,B{row+6})*100"),
-        ("İç Taşınım Katsayısı (h_i)", actual.get("h_i") or geo.get("h_i", 0.0), "W/m²·K", "Gnielinski / Dittus-Boelter"),
-        ("Dış Taşınım Katsayısı (h_o)", actual.get("h_o") or geo.get("h_o", 0.0), "W/m²·K", "Bell-Delaware / Kern / Briggs-Young"),
-        ("Boru Tarafı Basınç Kaybı (ΔP_tube)", actual.get("delta_p_tube_kPa") or (geo.get("delta_p_tube", 0.0)/1000.0), "kPa", "Darcy-Weisbach"),
-        ("Gövde Tarafı Basınç Kaybı (ΔP_shell)", actual.get("delta_p_shell_kPa") or (geo.get("delta_p_shell", 0.0)/1000.0), "kPa", "Bell-Delaware / Kern"),
+        (
+            "Toplam Isı Transfer Katsayısı (U)",
+            actual.get("U") or selected.get("U") or geo.get("U", 0.0),
+            "W/m²·K",
+            "1 / (1/h_i + R_f_i + R_wall + R_f_o + 1/h_o)",
+        ),
+        (
+            "Gerekli Isı Transfer Alanı (A_req)",
+            actual.get("A_required") or selected.get("A_required", 0.0),
+            "m²",
+            "Q / (U * F * LMTD)",
+        ),
+        (
+            "Mevcut Isı Transfer Alanı (A_actual)",
+            actual.get("A_total") or selected.get("A") or geo.get("A_total", 0.0),
+            "m²",
+            "N * π * Do * L",
+        ),
+        ("Termal Aşım Oranı (Margin)", None, "%", f"=(B{row + 7}-B{row + 6})/MAX(0.001,B{row + 6})*100"),
+        (
+            "İç Taşınım Katsayısı (h_i)",
+            actual.get("h_i") or geo.get("h_i", 0.0),
+            "W/m²·K",
+            "Gnielinski / Dittus-Boelter",
+        ),
+        (
+            "Dış Taşınım Katsayısı (h_o)",
+            actual.get("h_o") or geo.get("h_o", 0.0),
+            "W/m²·K",
+            "Bell-Delaware / Kern / Briggs-Young",
+        ),
+        (
+            "Boru Tarafı Basınç Kaybı (ΔP_tube)",
+            actual.get("delta_p_tube_kPa") or (geo.get("delta_p_tube", 0.0) / 1000.0),
+            "kPa",
+            "Darcy-Weisbach",
+        ),
+        (
+            "Gövde Tarafı Basınç Kaybı (ΔP_shell)",
+            actual.get("delta_p_shell_kPa") or (geo.get("delta_p_shell", 0.0) / 1000.0),
+            "kPa",
+            "Bell-Delaware / Kern",
+        ),
     ]
 
     for label, val, unit, note in thermal_rows:
@@ -1317,14 +1382,20 @@ def export_calculation_excel(context: dict) -> bytes:
             val_cell.value = float(val) if val is not None else 0.0
         val_cell.font = bold_font
         ws.cell(row=row, column=3, value=unit).font = regular_font
-        ws.cell(row=row, column=4, value=note if not note.startswith("=") else "Canlı Excel Formülü").font = regular_font
+        ws.cell(
+            row=row, column=4, value=note if not note.startswith("=") else "Canlı Excel Formülü"
+        ).font = regular_font
 
     for col in ws.columns:
         max_len = max(len(str(cell.value or "")) for cell in col)
         col_letter = openpyxl.utils.get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
 
-    orc_data = context.get("orc_data") or (context.get("inputs") if any(k in context.get("inputs", {}) for k in ("n_boilers", "pipe_di_mm", "pipe_dn_sel")) else None)
+    orc_data = context.get("orc_data") or (
+        context.get("inputs")
+        if any(k in context.get("inputs", {}) for k in ("n_boilers", "pipe_di_mm", "pipe_dn_sel"))
+        else None
+    )
     if orc_data:
         ws_orc = wb.create_sheet(title="ORC & WHRU Tesis Verileri")
         ws_orc.merge_cells("A1:F1")
@@ -1349,11 +1420,13 @@ def export_calculation_excel(context: dict) -> bytes:
         tot_m_oil = float(orc_data.get("m_oil", 32.0) or 32.0)
         for idx in range(1, max(2, n_b + 1)):
             r += 1
-            is_active = (idx <= n_b)
+            is_active = idx <= n_b
             split_pct = (100.0 / n_b) if is_active else 0.0
             m_oil_i = (tot_m_oil / n_b) if is_active else 0.0
             m_flue_i = float(orc_data.get(f"m_flue_{idx}", orc_data.get("m_flue", 28.5)) or 28.5) if is_active else 0.0
-            t_flue_i = float(orc_data.get(f"t_flue_in_{idx}", orc_data.get("T_flue_in", 340.0)) or 340.0) if is_active else 0.0
+            t_flue_i = (
+                float(orc_data.get(f"t_flue_in_{idx}", orc_data.get("T_flue_in", 340.0)) or 340.0) if is_active else 0.0
+            )
 
             ws_orc.cell(row=r, column=1, value=f"WHRU-{idx}").font = bold_font
             ws_orc.cell(row=r, column=2, value="Aktif" if is_active else "Pasif").font = regular_font
@@ -1400,10 +1473,32 @@ def export_calculation_excel(context: dict) -> bytes:
             p_cell.alignment = Alignment(horizontal="center")
 
         orc_rows = [
-            ("ORC Çevrim Akışkanı", str(orc_data.get("orc_fluid_sel", "Cyclopentane")), "-", "Organik Çalışma Akışkanı"),
-            ("Buharlaşma Basıncı (P_evap)", float(orc_data.get("P_evap_bar", 16.0) or 16.0), "bar", "Süperheater / Evaporatör Basıncı"),
-            ("Kondenser Tipi", "Hava Soğutmalı (ACC)" if str(orc_data.get("condenser_type", "")).lower() in ("air", "acc") else "Su Soğutmalı Gövde-Boru", "-", "Kondensasyon Kaynağı"),
-            ("Termal Yağ Akışkanı", str(orc_data.get("oil_fluid_sel", "Therminol 66")), "-", "Isı Taşıyıcı Kapalı Devre Yağı"),
+            (
+                "ORC Çevrim Akışkanı",
+                str(orc_data.get("orc_fluid_sel", "Cyclopentane")),
+                "-",
+                "Organik Çalışma Akışkanı",
+            ),
+            (
+                "Buharlaşma Basıncı (P_evap)",
+                float(orc_data.get("P_evap_bar", 16.0) or 16.0),
+                "bar",
+                "Süperheater / Evaporatör Basıncı",
+            ),
+            (
+                "Kondenser Tipi",
+                "Hava Soğutmalı (ACC)"
+                if str(orc_data.get("condenser_type", "")).lower() in ("air", "acc")
+                else "Su Soğutmalı Gövde-Boru",
+                "-",
+                "Kondensasyon Kaynağı",
+            ),
+            (
+                "Termal Yağ Akışkanı",
+                str(orc_data.get("oil_fluid_sel", "Therminol 66")),
+                "-",
+                "Isı Taşıyıcı Kapalı Devre Yağı",
+            ),
         ]
         for o_label, o_val, o_unit, o_method in orc_rows:
             r += 1
@@ -1420,4 +1515,3 @@ def export_calculation_excel(context: dict) -> bytes:
     output = BytesIO()
     wb.save(output)
     return output.getvalue()
-

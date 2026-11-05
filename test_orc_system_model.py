@@ -86,6 +86,7 @@ class TestOrcSystemModel(unittest.TestCase):
 
     def test_cyclopentane_properties_real_fluid(self):
         from orc_system_model import cyclopentane_properties
+
         props = cyclopentane_properties(14.0, t_sup_c=210.0, t_in_c=45.0, p_cond_bar=1.5)
         self.assertAlmostEqual(props["T_sat_C"], 160.0, delta=1.5)
         self.assertGreater(props["h_fg"], 200000.0)
@@ -117,12 +118,14 @@ class TestOrcSystemModel(unittest.TestCase):
 
     def test_pinch_point_violation_detection(self):
         # Low flue temperature and high evaporation pressure to trigger pinch limit
-        res_pinched = solve_orc_system({
-            "T_flue_in": 340.0,
-            "P_evap_bar": 28.0,
-            "m_oil": 20.0,
-            "UA_ph_kW_K": 80.0,
-        })
+        res_pinched = solve_orc_system(
+            {
+                "T_flue_in": 340.0,
+                "P_evap_bar": 28.0,
+                "m_oil": 20.0,
+                "UA_ph_kW_K": 80.0,
+            }
+        )
         self.assertLess(res_pinched["orc"]["delta_T_pinch_C"], 5.0)
         self.assertTrue(res_pinched["orc"]["pinch_warning"])
 
@@ -225,8 +228,9 @@ class TestOrcSystemModel(unittest.TestCase):
 
     def test_schematic_html_equipment_nodes(self):
         import orc_schematic_component
+
         html = orc_schematic_component.get_orc_schematic_html()
-        self.assertIn("viewBox=\"0 0 1520 620\"", html)
+        self.assertIn('viewBox="0 0 1520 620"', html)
         self.assertIn("node_boiler_1", html)
         self.assertIn("node_boiler_2", html)
         self.assertIn("node_boiler_3", html)
@@ -268,6 +272,7 @@ class TestOrcSystemModel(unittest.TestCase):
 
     def test_exchanger_3d_component_generation(self):
         from exchanger_3d_component import get_exchanger_3d_html
+
         geom_input = {
             "D_o_mm": 25.4,
             "D_i_mm": 21.1,
@@ -292,6 +297,7 @@ class TestOrcSystemModel(unittest.TestCase):
     def test_100_dynamic_scenarios_and_first_law(self):
         """Execute >= 100 parametric scenarios verifying flue gas sensitivity, hydraulic split, and Q_boiler >= Q_ORC."""
         from verify_100_scenarios import run_scenario_matrix
+
         success = run_scenario_matrix()
         self.assertTrue(success, "At least one thermodynamic check failed in the 100+ scenario matrix")
 
@@ -337,7 +343,10 @@ class TestOrcSystemModel(unittest.TestCase):
         # Superheater heat duty must be lower due to cooler oil entering SH
         self.assertLess(res_manual["superheater"]["Q_kW"], res_auto["superheater"]["Q_kW"])
         # First Law with line loss: Q_boiler >= Q_ORC + Q_pipe_loss
-        self.assertGreaterEqual(res_manual["boiler"]["Q_kW"], res_manual["orc"]["Q_total_kW"] + res_manual["superheater"]["Q_pipe_loss_kW"] - 0.2)
+        self.assertGreaterEqual(
+            res_manual["boiler"]["Q_kW"],
+            res_manual["orc"]["Q_total_kW"] + res_manual["superheater"]["Q_pipe_loss_kW"] - 0.2,
+        )
 
         # 3. Pipeline temperature drop mode: delta_T_pipe_loss_C = 8.0 °C
         res_loss = solve_orc_system({"n_boilers": 2, "bypass_ratio": 0.0, "delta_T_pipe_loss_C": 8.0})
@@ -349,11 +358,14 @@ class TestOrcSystemModel(unittest.TestCase):
     def test_multi_whru_manifold_and_flow_visualizations(self):
         """Verify multi-WHRU cold distribution and hot collection manifolds in SVG and interactive controls."""
         import orc_schematic_component
-        html = orc_schematic_component.get_orc_schematic_html({
-            "n_boilers": 3,
-            "T_oil_sh_in_C": 280.0,
-            "delta_T_pipe_loss_C": 10.0,
-        })
+
+        html = orc_schematic_component.get_orc_schematic_html(
+            {
+                "n_boilers": 3,
+                "T_oil_sh_in_C": 280.0,
+                "delta_T_pipe_loss_C": 10.0,
+            }
+        )
         # Check hot collection manifold header (y=80) and risers
         self.assertIn("pipe_oil_sup_manifold", html)
         self.assertIn("pipe_oil_sup_b1", html)

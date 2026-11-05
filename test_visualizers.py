@@ -249,6 +249,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_get_val_with_default_arg(self):
         from app_web import get_val
+
         # Test 1 arg
         val1 = get_val("exch_type")
         self.assertIsNotNone(val1)
@@ -261,6 +262,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_live_hud_and_split_balancing(self):
         from orc_schematic_component import get_orc_schematic_html
+
         html = get_orc_schematic_html({"n_boilers": 3, "m_oil": 35.0, "m_cp": 12.0})
         self.assertIn("insp_live_hud", html)
         self.assertIn("function updateInspectorLiveHUD(data)", html)
@@ -278,6 +280,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_3d_plant_robustness(self):
         from orc_3d_plant_component import get_orc_3d_plant_js
+
         js = get_orc_3d_plant_js()
         self.assertIn("const stainlessMat = new THREE.MeshStandardMaterial", js)
         self.assertIn("WebGLRenderer", js)
@@ -294,12 +297,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
         self.assertEqual(DEFAULT_STATE["pipe_length_m"], 80.0)
 
         # 2. Darcy-Weisbach formulation in HTML/JS
-        html = get_orc_schematic_html({
-            "pipe_di_mm": 102.3,
-            "pipe_length_m": 120.0,
-            "UA_ph": 140.0,
-            "UA_sh": 40.0
-        })
+        html = get_orc_schematic_html({"pipe_di_mm": 102.3, "pipe_length_m": 120.0, "UA_ph": 140.0, "UA_sh": 40.0})
         self.assertIn("pipe_di_mm", html)
         self.assertIn("pipe_length_m", html)
         self.assertIn("f_darcy", html)
@@ -310,16 +308,19 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_solver_and_fluid_selection(self):
         from orc_schematic_component import get_orc_schematic_html
-        html = get_orc_schematic_html({
-            "solver_method": "LMTD",
-            "cold_fluid_sel": "Dowtherm A",
-            "cp_hot": 1150.0,
-            "density_hot": 0.52,
-            "mu_hot": 2.6e-5,
-            "cp_cold": 2150.0,
-            "density_cold": 980.0,
-            "mu_cold": 0.0008
-        })
+
+        html = get_orc_schematic_html(
+            {
+                "solver_method": "LMTD",
+                "cold_fluid_sel": "Dowtherm A",
+                "cp_hot": 1150.0,
+                "density_hot": 0.52,
+                "mu_hot": 2.6e-5,
+                "cp_cold": 2150.0,
+                "density_cold": 980.0,
+                "mu_cold": 0.0008,
+            }
+        )
         self.assertIn("ORC_FLUIDS", html)
         self.assertIn("Cyclopentane", html)
         self.assertIn("n-Pentane", html)
@@ -345,10 +346,8 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_segmented_darcy_and_static_head(self):
         from orc_schematic_component import get_orc_schematic_html
-        html = get_orc_schematic_html({
-            "pipe_di_mm": 154.0,
-            "pipe_length_m": 80.0
-        })
+
+        html = get_orc_schematic_html({"pipe_di_mm": 154.0, "pipe_length_m": 80.0})
         self.assertIn("static_elevation_m", html)
         self.assertIn("hx_dp_bar", html)
         self.assertIn("dp_static_bar", html)
@@ -361,6 +360,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_turbine_enthalpy_and_power(self):
         from orc_schematic_component import get_orc_schematic_html
+
         html = get_orc_schematic_html({})
         self.assertIn("dh_is", html)
         self.assertIn("w_turb_mech_kw", html)
@@ -372,6 +372,7 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_boiler_flow_balance_and_dual_input(self):
         from orc_schematic_component import get_orc_schematic_html
+
         html = get_orc_schematic_html({})
         self.assertIn("num_b${bNum}_m_oil", html)
         self.assertIn("autoBalanceBoilerFlows", html)
@@ -379,13 +380,22 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_flue_gas_composition_and_manual_props(self):
         from orc_schematic_component import get_orc_schematic_html
-        html = get_orc_schematic_html({
-            "hot_mix_data": {"Nitrogen": 72.0, "Oxygen": 6.0, "CarbonDioxide": 15.0, "Water": 6.0, "SulfurDioxide": 1.0},
-            "hot_mix_basis": "mole",
-            "cp_hot": 1144.0,
-            "density_hot": 0.492,
-            "mu_hot": 3.55e-5
-        })
+
+        html = get_orc_schematic_html(
+            {
+                "hot_mix_data": {
+                    "Nitrogen": 72.0,
+                    "Oxygen": 6.0,
+                    "CarbonDioxide": 15.0,
+                    "Water": 6.0,
+                    "SulfurDioxide": 1.0,
+                },
+                "hot_mix_basis": "mole",
+                "cp_hot": 1144.0,
+                "density_hot": 0.492,
+                "mu_hot": 3.55e-5,
+            }
+        )
         self.assertIn("flue_gas_mix", html)
         self.assertIn("calcFlueGasMixtureProperties", html)
         self.assertIn("applyFlueGasPreset", html)
@@ -401,22 +411,25 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
 
     def test_orc_schematic_kettle_snt_and_multizone_config(self):
         from orc_schematic_component import get_orc_schematic_html
-        html = get_orc_schematic_html({
-            "exch_type": "Kanatçıklı Borulu (Finned Tube - WHRU Baca Kazanı)",
-            "st_tema_type": "K (Kettle Reboiler Evaporatör - Genişletilmiş Kubbeli)",
-            "st_shell_fluid": "Therminol 66 (Kızgın Yağ)",
-            "st_tube_fluid": "Siklopentan (ORC Çevrim Akışkanı)",
-            "st_kettle_dome_ratio": 1.95,
-            "st_demister_type": "SS316 Tel Örgü Ped (Wire Mesh Pad - 100 mm)",
-            "st_baffle_cut_pct": 30.0,
-            "st_baffle_spacing_mm": 250.0,
-            "st_pinch_min_target_c": 12.0,
-            "st_shell_fouling": 0.00025,
-            "st_tube_fouling": 0.00012,
-            "glide_c": 2.5,
-            "enable_multizone": True,
-            "t_subcool": 92.0
-        })
+
+        html = get_orc_schematic_html(
+            {
+                "exch_type": "Kanatçıklı Borulu (Finned Tube - WHRU Baca Kazanı)",
+                "st_tema_type": "K (Kettle Reboiler Evaporatör - Genişletilmiş Kubbeli)",
+                "st_shell_fluid": "Therminol 66 (Kızgın Yağ)",
+                "st_tube_fluid": "Siklopentan (ORC Çevrim Akışkanı)",
+                "st_kettle_dome_ratio": 1.95,
+                "st_demister_type": "SS316 Tel Örgü Ped (Wire Mesh Pad - 100 mm)",
+                "st_baffle_cut_pct": 30.0,
+                "st_baffle_spacing_mm": 250.0,
+                "st_pinch_min_target_c": 12.0,
+                "st_shell_fouling": 0.00025,
+                "st_tube_fouling": 0.00012,
+                "glide_c": 2.5,
+                "enable_multizone": True,
+                "t_subcool": 92.0,
+            }
+        )
         self.assertIn("whru_exch_type", html)
         self.assertIn("setWhruExchType", html)
         self.assertIn("whru_T_hot_out_opt", html)
@@ -443,12 +456,14 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
         from orc_3d_plant_component import get_orc_3d_plant_js
         from orc_schematic_component import get_orc_schematic_html
 
-        html = get_orc_schematic_html({
-            "P_evap_bar": 1.5,
-            "P_cond_bar": 2.0,  # Inverted pressure condition P_evap <= P_cond
-            "m_oil": 0.0,
-            "orc_fluid_sel": "Toluene"
-        })
+        html = get_orc_schematic_html(
+            {
+                "P_evap_bar": 1.5,
+                "P_cond_bar": 2.0,  # Inverted pressure condition P_evap <= P_cond
+                "m_oil": 0.0,
+                "orc_fluid_sel": "Toluene",
+            }
+        )
 
         # 1. Kays & London Cr < 1e-4 guard exists to prevent NaN
         self.assertIn("if (cr < 1e-4)", html)
@@ -474,13 +489,15 @@ class TestVisualizersAndDeliverables(unittest.TestCase):
         from orc_3d_plant_component import get_orc_3d_plant_js
         from orc_schematic_component import get_orc_schematic_html
 
-        html = get_orc_schematic_html({
-            "cold_fluid_sel": "Mobiltherm 605",
-            "orc_fluid_sel": "R245fa",
-            "m_flue": 22.0,
-            "T_flue_in": 460.0,
-            "flue_gas_cp": 1120.0
-        })
+        html = get_orc_schematic_html(
+            {
+                "cold_fluid_sel": "Mobiltherm 605",
+                "orc_fluid_sel": "R245fa",
+                "m_flue": 22.0,
+                "T_flue_in": 460.0,
+                "flue_gas_cp": 1120.0,
+            }
+        )
 
         # 1. JSON Export function and action button in mode-bar
         self.assertIn("exportSimulationJSON", html)

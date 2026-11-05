@@ -11,12 +11,12 @@ from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
+ht: Any = None
 try:
     import ht
 
     HT_AVAILABLE = True
 except ImportError:
-    ht = None
     HT_AVAILABLE = False
 
 from correlations import _bowman_lmtd_factor
@@ -413,9 +413,11 @@ class Fluid:
         (CoolProp / IAPWS) olan akışkanlarda anlamlıdır; manuel akışkanda μ(T)
         bağımlılığı olmadığından None döner (düzeltme uygulanmaz).
         """
-        if getattr(self, "mu_andrade_a", None) is not None and getattr(self, "mu_andrade_b", None) is not None:
+        andrade_a = getattr(self, "mu_andrade_a", None)
+        andrade_b = getattr(self, "mu_andrade_b", None)
+        if andrade_a is not None and andrade_b is not None:
             t_k = max(1.0, T_c + 273.15)
-            return float(np.exp(self.mu_andrade_a + self.mu_andrade_b / t_k))
+            return float(np.exp(andrade_a + andrade_b / t_k))
         try:
             if self.is_iapws and IAPWS_AVAILABLE:
                 from iapws import IAPWS97_Transport
@@ -982,9 +984,8 @@ class FinTubeHeatExchanger:
                 "C_r": Cr,
                 "Q_max [W]": Q_max,
                 "status": "warning" if Q_max <= Q else "ok",
-                "warnings": [f"Zeotropik sıcaklık kayması (glide={glide:.1f}°C) dikkate alındı."] + (
-                    ["Gizli ısı kapasitesi sınırına ulaşıldı."] if Q_max <= Q else []
-                ),
+                "warnings": [f"Zeotropik sıcaklık kayması (glide={glide:.1f}°C) dikkate alındı."]
+                + (["Gizli ısı kapasitesi sınırına ulaşıldı."] if Q_max <= Q else []),
             }
 
         NTU = (self.U * self.A) / C_cold
@@ -1071,7 +1072,9 @@ class FinTubeHeatExchanger:
             q_cond_act = 0.0
             q_sub_act = 0.0
             T_hot_out = T_hot_in - (q_desup_act / max(1e-6, m_hot * cp_hot))
-            warnings.append("Kondenser yüzey alanı yetersiz: akışkan yalnızca kızgınlığını atabildi (yoğuşma başlamadı).")
+            warnings.append(
+                "Kondenser yüzey alanı yetersiz: akışkan yalnızca kızgınlığını atabildi (yoğuşma başlamadı)."
+            )
         elif Q_actual <= Q_desup + Q_cond:
             q_desup_act = Q_desup
             q_cond_act = Q_actual - Q_desup
@@ -1143,9 +1146,8 @@ class FinTubeHeatExchanger:
                 "C_r": Cr,
                 "Q_max [W]": Q_max,
                 "status": "warning" if Q_max <= Q else "ok",
-                "warnings": [f"Zeotropik sıcaklık kayması (glide={glide:.1f}°C) dikkate alındı."] + (
-                    ["Gizli ısı kapasitesi sınırına ulaşıldı; tam buharlaşma olmayabilir."] if Q_max <= Q else []
-                ),
+                "warnings": [f"Zeotropik sıcaklık kayması (glide={glide:.1f}°C) dikkate alındı."]
+                + (["Gizli ısı kapasitesi sınırına ulaşıldı; tam buharlaşma olmayabilir."] if Q_max <= Q else []),
             }
 
         NTU = (self.U * self.A) / C_hot
@@ -1188,7 +1190,7 @@ class FinTubeHeatExchanger:
         n_segments = max(2, int(n_segments))
         dA = self.A / n_segments
 
-        warnings = []
+        warnings: list[str] = []
         phase_warns = self._check_phase_change(T_hot_in, T_cold_in)
         for pw in phase_warns:
             _append_unique(warnings, pw)
@@ -1311,7 +1313,9 @@ class FinTubeHeatExchanger:
         dT_local_profile = [round(th - tc, 2) for th, tc in zip(T_h_list, T_c_list, strict=True)]
         min_dT_local = float(min(dT_local_profile)) if dT_local_profile else 0.0
         if min_dT_local < 0.0:
-            warnings.append(f"Eşanjör içinde yerel sıcaklık çakışması (temperature cross) tespit edildi (Min ΔT = {min_dT_local:.1f} °C).")
+            warnings.append(
+                f"Eşanjör içinde yerel sıcaklık çakışması (temperature cross) tespit edildi (Min ΔT = {min_dT_local:.1f} °C)."
+            )
 
         q_max = C_min * (T_hot_in - T_cold_in)
         epsilon_total = Q_total / q_max if q_max > 0 else 0.0
@@ -1528,7 +1532,7 @@ class FinTubeHeatExchanger:
         D_o = _require_positive("Dış çap", D_o)
         D_i = _require_positive("İç çap", D_i)
         L = _require_positive("Boru uzunluğu", L)
-        N = _require_positive("Boru sayısı", N)
+        N = int(_require_positive("Boru sayısı", N))
         k_wall = _require_positive("Duvar ısıl iletkenliği", k_wall)
         if D_i >= D_o:
             raise InvalidGeometryError("Dış çap iç çaptan büyük olmalıdır.")
@@ -1585,7 +1589,9 @@ class FinTubeHeatExchanger:
         if is_two_phase_in:
             if h_tp_in > 0:
                 h_i = h_tp_in
-                warnings.append(f"İç taraf iki-fazlı mod: h_i = {h_i:.0f} W/m²K (kullanıcı tanımlı taşınım katsayısı) uygulandı.")
+                warnings.append(
+                    f"İç taraf iki-fazlı mod: h_i = {h_i:.0f} W/m²K (kullanıcı tanımlı taşınım katsayısı) uygulandı."
+                )
             else:
                 h_calc = None
                 if HT_AVAILABLE and getattr(fluid_in, "h_fg", None):
@@ -1609,7 +1615,9 @@ class FinTubeHeatExchanger:
                     warnings.append(f"İç taraf iki-fazlı mod: Shah korelasyonu ile h_i = {h_i:.0f} W/m²K hesaplandı.")
                 else:
                     h_i = 4500.0
-                    warnings.append(f"İç taraf iki-fazlı mod: h_i = {h_i:.0f} W/m²K (faz değişimi taşınım katsayısı) uygulandı.")
+                    warnings.append(
+                        f"İç taraf iki-fazlı mod: h_i = {h_i:.0f} W/m²K (faz değişimi taşınım katsayısı) uygulandı."
+                    )
 
         # --- DUVAR İLETİM DİRENCİ (R_wall) ---
         R_wall = np.log(D_o / D_i) / (2 * np.pi * k_wall * L * N)
@@ -1843,14 +1851,18 @@ class FinTubeHeatExchanger:
             eta_fin = 1.0
 
         # İki-fazlı mod: dış tarafta faz değişimi kontrolü (yoğuşma veya gövde tarafı kaynama)
-        is_condensing_shell = (not hot_is_tube and getattr(self.hot_fluid, "h_fg", None) and not self.hot_fluid.single_phase)
-        is_boiling_shell = (hot_is_tube and getattr(self.cold_fluid, "h_fg", None) and not self.cold_fluid.single_phase)
+        is_condensing_shell = (
+            not hot_is_tube and getattr(self.hot_fluid, "h_fg", None) and not self.hot_fluid.single_phase
+        )
+        is_boiling_shell = hot_is_tube and getattr(self.cold_fluid, "h_fg", None) and not self.cold_fluid.single_phase
         is_two_phase_out = bool(geom.get("is_two_phase_shell", False)) or is_condensing_shell or is_boiling_shell
         h_tp_out = float(geom.get("h_two_phase_shell", 0.0) or geom.get("h_tp_shell", 0.0) or 0.0)
         if is_two_phase_out:
             if h_tp_out > 0:
                 h_o = h_tp_out
-                warnings.append(f"Dış taraf iki-fazlı mod: h_o = {h_o:.0f} W/m²K (kullanıcı tanımlı taşınım katsayısı) uygulandı.")
+                warnings.append(
+                    f"Dış taraf iki-fazlı mod: h_o = {h_o:.0f} W/m²K (kullanıcı tanımlı taşınım katsayısı) uygulandı."
+                )
             elif is_boiling_shell:
                 h_o = 3000.0  # Tipik Kettle reboiler havuz kaynaması (nucleate pool boiling) h_o
                 warnings.append(f"Gövde tarafı havuz kaynaması (Kettle/Evaporatör): h_o = {h_o:.0f} W/m²K uygulandı.")
@@ -1874,10 +1886,14 @@ class FinTubeHeatExchanger:
                         pass
                 if h_calc and h_calc > 0:
                     h_o = float(h_calc)
-                    warnings.append(f"Dış taraf iki-fazlı mod: Nusselt demet yoğuşması ile h_o = {h_o:.0f} W/m²K hesaplandı.")
+                    warnings.append(
+                        f"Dış taraf iki-fazlı mod: Nusselt demet yoğuşması ile h_o = {h_o:.0f} W/m²K hesaplandı."
+                    )
                 else:
                     h_o = 3500.0
-                    warnings.append(f"Dış taraf iki-fazlı mod: h_o = {h_o:.0f} W/m²K (varsayılan taşınım katsayısı) uygulandı.")
+                    warnings.append(
+                        f"Dış taraf iki-fazlı mod: h_o = {h_o:.0f} W/m²K (varsayılan taşınım katsayısı) uygulandı."
+                    )
 
         # --- Sieder-Tate çeper viskozite düzeltmesi (Faz B1) ---
         # h *= (mu_b / mu_w)^0.14. Çeper sıcaklığı, film dirençlerine göre ağırlıklı
@@ -2052,14 +2068,14 @@ class FinTubeHeatExchanger:
                 A_noz = np.pi * D_noz**2 / 4.0
                 A_noz = max(A_noz, 1e-6)
                 v_noz = m_out / (fluid_out.density * A_noz)
-                delta_p_nozzle = (
-                    SHELL_NOZZLE_COUNT * SHELL_NOZZLE_VELOCITY_HEADS * (fluid_out.density * v_noz**2 / 2.0)
-                )
+                delta_p_nozzle = SHELL_NOZZLE_COUNT * SHELL_NOZZLE_VELOCITY_HEADS * (fluid_out.density * v_noz**2 / 2.0)
                 delta_p_shell += delta_p_nozzle
                 warnings.append(f"Gövde nozul ΔP: v_noz={v_noz:.2f} m/s, ΔP_nozzle={delta_p_nozzle:.0f} Pa eklendi.")
                 # Faz 2.3: TEMA RCB-4.62 Giriş nozulu momentum akısı (ρv²) ve çarpma plakası kontrolü
                 rho_v2_noz = fluid_out.density * v_noz**2
-                is_two_phase_out = getattr(fluid_out, "is_two_phase", False) or (fluid_out.density < 200.0 and fluid_out.density > 2.0)
+                is_two_phase_out = getattr(fluid_out, "is_two_phase", False) or (
+                    fluid_out.density < 200.0 and fluid_out.density > 2.0
+                )
                 rho_v2_limit = 740.0 if is_two_phase_out else TEMA_RHO_V2_LIMIT
                 if rho_v2_noz > rho_v2_limit or is_two_phase_out:
                     _append_unique(
@@ -2071,15 +2087,15 @@ class FinTubeHeatExchanger:
                 if baffle_spacing < 0.2 * D_shell or baffle_spacing > 1.0 * D_shell:
                     _append_unique(
                         warnings,
-                        f"TEMA RCB-4.3 şaşırtma aralığı uyarısı: B={baffle_spacing*1000:.0f} mm "
-                        f"({0.2*D_shell*1000:.0f} - {1.0*D_shell*1000:.0f} mm [0.2-1.0 D_shell] aralığında olmalıdır).",
+                        f"TEMA RCB-4.3 şaşırtma aralığı uyarısı: B={baffle_spacing * 1000:.0f} mm "
+                        f"({0.2 * D_shell * 1000:.0f} - {1.0 * D_shell * 1000:.0f} mm [0.2-1.0 D_shell] aralığında olmalıdır).",
                     )
                 max_span = MAX_UNSUPPORTED_SPAN_FACTOR * D_o
                 if baffle_spacing > max_span:
                     _append_unique(
                         warnings,
-                        f"TEMA desteklenmeyen boru boyu: baffle aralığı = {baffle_spacing*1000:.0f} mm > "
-                        f"{max_span*1000:.0f} mm (limit). Titreşim riski — baffle aralığını düşürün.",
+                        f"TEMA desteklenmeyen boru boyu: baffle aralığı = {baffle_spacing * 1000:.0f} mm > "
+                        f"{max_span * 1000:.0f} mm (limit). Titreşim riski — baffle aralığını düşürün.",
                     )
             elif self.exchanger_type == EXCHANGER_TYPE_DOUBLE:
                 D_h_ann = geom.get("D_shell", D_o * 1.5) - D_o
@@ -2109,7 +2125,11 @@ class FinTubeHeatExchanger:
         except Exception as exc:
             warnings.append(f"Gövde/kanat tarafı fan gücü hesaplanamadı: {exc}")
 
-        v_cross_flow = (G_s / fluid_out.density) if (self.exchanger_type == EXCHANGER_TYPE_SHELL and "G_s" in locals() and fluid_out.density > 0) else v_out
+        v_cross_flow = (
+            (G_s / fluid_out.density)
+            if (self.exchanger_type == EXCHANGER_TYPE_SHELL and "G_s" in locals() and fluid_out.density > 0)
+            else v_out
+        )
 
         # API 661 Air-cooled parameters
         v_face = (
@@ -2117,7 +2137,11 @@ class FinTubeHeatExchanger:
             if (self.exchanger_type == EXCHANGER_TYPE_FINNED and "W_estimate" in locals() and fluid_out.density > 0)
             else float(geom.get("api_face_velocity", 0.0) or 0.0)
         )
-        bundle_width = float(W_estimate) if (self.exchanger_type == EXCHANGER_TYPE_FINNED and "W_estimate" in locals()) else float(geom.get("bundle_width", 0.0) or 0.0)
+        bundle_width = (
+            float(W_estimate)
+            if (self.exchanger_type == EXCHANGER_TYPE_FINNED and "W_estimate" in locals())
+            else float(geom.get("bundle_width", 0.0) or 0.0)
+        )
         bundle_length = float(L)
         geom.setdefault("api_face_velocity", v_face)
         geom.setdefault("bundle_width", bundle_width)

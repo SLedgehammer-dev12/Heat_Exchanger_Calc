@@ -77,7 +77,9 @@ def setup_logging(app_mode="app"):
             logging.getLogger(__name__).info("Logging initialized for %s: %s", app_mode, log_file)
             return log_file
         except OSError:
-            root_logger.handlers = [h for h in root_logger.handlers if not getattr(h, "_heat_exchanger_file_handler", False)]
+            root_logger.handlers = [
+                h for h in root_logger.handlers if not getattr(h, "_heat_exchanger_file_handler", False)
+            ]
 
     # Fallback: log to stderr only (never crash on a filesystem problem).
     console = logging.StreamHandler()
