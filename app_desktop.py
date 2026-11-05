@@ -4,14 +4,15 @@ import json
 import logging
 import os
 import sys
+from collections import deque
 
 # Ensure application base directory and PyInstaller bundle directory are in sys.path
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
@@ -63,6 +64,7 @@ from reporting import (
     build_calculation_report,
     build_calculation_report_pdf,
     export_calculation_csv,
+    export_calculation_excel,
     generate_tema_datasheet_pdf,
 )
 from standards import ache_fin_names, fouling_preset_options, tube_preset_options
@@ -176,14 +178,19 @@ def build_fluid_from_selection(selection, fluid_data, mixture_data, mixture_basi
         )
         fluid.property_source = mix.get("property_source")
         return fluid
-    return Fluid(
+    resolved_mu = fluid_data["mu"] if fluid_data.get("mu") is not None and fluid_data.get("mu") > 0 else mu
+    resolved_k = fluid_data["k_cond"] if fluid_data.get("k_cond") is not None and fluid_data.get("k_cond") > 0 else k_cond
+    fluid = Fluid(
         name=fluid_data["name"],
         cp=fluid_data.get("cp", 1000.0),
         density=fluid_data.get("density", 1.0),
-        mu=mu,
-        k_cond=k_cond,
+        mu=resolved_mu,
+        k_cond=resolved_k,
         is_coolprop=False,
     )
+    if fluid_data.get("property_source"):
+        fluid.property_source = fluid_data.get("property_source")
+    return fluid
 
 
 def compute_desktop_calculation(snapshot):
@@ -300,6 +307,11 @@ def compute_desktop_calculation(snapshot):
         res_custom, res_custom_lmtd, res_ht, res_lmtd = crosscheck_results
         geo_res = holder["geo_res"]
 
+
+    try:
+        crosscheck_results.append(hx.solve_segmented(m_hot, m_cold, T_hot, T_cold, n_segments=10))
+    except Exception as exc:
+        logger.warning("Segmentli çözücü cross-check hatası: %s", exc)
 
     pychemengg_warning = None
     try:
@@ -521,7 +533,7 @@ class HeatExchangerDesktopApp(QMainWindow):
         super().__init__()
         self.setWindowTitle(_("ISI DEGISTIRICI DETAYLI HESAP ARACI"))
         self.resize(1100, 800)
-        self.all_logs = []
+        self.all_logs = deque(maxlen=5000)
         self.latest_update_info = None
         self.initUI()
         self.setup_ui_logging()
@@ -994,10 +1006,10 @@ class HeatExchangerDesktopApp(QMainWindow):
         self.btn_export_csv.hide()
 
         # Grafik için Figure ve Canvas (Sonuçlar sekmesinin en altına)
-        self.figure = plt.figure(figsize=(6, 4))
+        self.figure = Figure(figsize=(6, 4))
         self.canvas = FigureCanvas(self.figure)
         res_layout.addWidget(self.canvas)
-        self.figure_profile = plt.figure(figsize=(6, 3))
+        self.figure_profile = Figure(figsize=(6, 3))
         self.canvas_profile = FigureCanvas(self.figure_profile)
         res_layout.addWidget(self.canvas_profile)
 
@@ -1039,6 +1051,38 @@ class HeatExchangerDesktopApp(QMainWindow):
 
         self.tabs.addTab(self.tab_log, "📝 Sistem Logları")
 
+        # Sekme 4: Canlı ORC Simülasyonu
+        self.tab_orc = QWidget()
+        orc_layout = QVBoxLayout(self.tab_orc)
+        orc_info = QLabel(
+            "<h3>🏭 Organik Rankine Çevrimi (ORC) & Termal Yağ Şebekesi</h3>"
+            "<p>Kızgın yağ kazanı, kızdırıcı, buharlaştırıcı/ön ısıtıcı ve ORC türbini arasındaki "
+            "seri ısı değiştirici şebekesini ve dinamik 3 yollu bypass vanası kontrolünü canlandırır.</p>"
+        )
+        orc_layout.addWidget(orc_info)
+        btn_open_orc = QPushButton("🌐 Canlı ORC P&ID Şemasını Aç (Etkileşimli SVG/DOM)")
+        btn_open_orc.setStyleSheet("font-size: 13px; font-weight: bold; padding: 8px; background-color: #0f3a5d; color: white; border-radius: 4px;")
+        btn_open_orc.clicked.connect(self.open_orc_schematic)
+        orc_layout.addWidget(btn_open_orc)
+        orc_layout.addStretch()
+        self.tabs.addTab(self.tab_orc, "🏭 Canlı ORC")
+
+        # Sekme 5: 3D Teardown Modeli
+        self.tab_3d = QWidget()
+        layout_3d = QVBoxLayout(self.tab_3d)
+        info_3d = QLabel(
+            "<h3>🔬 3D Eşanjör Teardown Modeli (Three.js / WebGL)</h3>"
+            "<p>Eşanjör bileşenlerini (boru demeti, gövde, ayna, deflektörler, nozullar) 3 boyutlu ortamda "
+            "patlatılmış görünüm (exploded view), saydamlık, kesit ve gerçek akış simülasyonu ile inceleyin.</p>"
+        )
+        layout_3d.addWidget(info_3d)
+        btn_open_3d = QPushButton("🔬 3D Teardown Modelini Başlat (WebGL)")
+        btn_open_3d.setStyleSheet("font-size: 13px; font-weight: bold; padding: 8px; background-color: #10b981; color: white; border-radius: 4px;")
+        btn_open_3d.clicked.connect(self.open_3d_viewer)
+        layout_3d.addWidget(btn_open_3d)
+        layout_3d.addStretch()
+        self.tabs.addTab(self.tab_3d, "🔬 3D Model")
+
         self.toggle_purpose(self.combo_purpose.currentText())
         self.toggle_hot_fluid(self.combo_hot.currentText())
         self.toggle_cold_fluid(self.combo_cold.currentText())
@@ -1054,6 +1098,72 @@ class HeatExchangerDesktopApp(QMainWindow):
             os.startfile(log_dir)
         else:
             subprocess.run(["xdg-open", log_dir])
+
+    def open_orc_schematic(self):
+        try:
+            import tempfile
+            import webbrowser
+
+            from orc_schematic_component import get_orc_schematic_html
+
+            snapshot = self.create_calculation_snapshot()
+            m_hot_val = to_kg_s(snapshot.get("m_hot_raw", 32.0), snapshot.get("m_hot_unit", "kg/s"))
+            m_cold_val = to_kg_s(snapshot.get("m_cold_raw", 11.5), snapshot.get("m_cold_unit", "kg/s"))
+            t_hot_val = to_celsius(snapshot.get("T_hot_raw", 295.0), snapshot.get("T_hot_unit", "degC"))
+            t_cold_val = to_celsius(snapshot.get("T_cold_raw", 45.0), snapshot.get("T_cold_unit", "degC"))
+            p_pump = snapshot.get("pump_efficiency", 0.70)
+            if p_pump > 1.0:
+                p_pump /= 100.0
+            p_fan = snapshot.get("fan_efficiency", 0.60)
+            if p_fan > 1.0:
+                p_fan /= 100.0
+            orc_data = {
+                "m_oil": m_hot_val,
+                "m_hot": m_hot_val,
+                "T_hot_in": t_hot_val,
+                "m_cp": m_cold_val,
+                "m_cold": m_cold_val,
+                "T_cp_in": t_cold_val,
+                "T_cold_in": t_cold_val,
+                "P_evap_bar": 14.0,
+                "pump_eff": p_pump,
+                "fan_eff": p_fan,
+                "U_value": snapshot.get("U", 500.0),
+                "Area": snapshot.get("A", 50.0),
+            }
+            html_content = get_orc_schematic_html(orc_data)
+            temp_path = os.path.join(tempfile.gettempdir(), "orc_schematic_live.html")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            webbrowser.open(f"file://{temp_path}")
+        except Exception as exc:
+            self.show_error("Hata", f"ORC şeması açılamadı: {exc}", exc)
+
+    def open_3d_viewer(self):
+        try:
+            import tempfile
+            import webbrowser
+
+            from exchanger_3d_component import get_exchanger_3d_html
+
+            geom = {
+                "D_o_mm": self.spin_do.value(),
+                "D_i_mm": self.spin_di.value(),
+                "L_m": self.spin_l.value(),
+                "N_tubes": self.spin_nt.value(),
+                "D_shell_mm": self.spin_d_shell.value(),
+                "baffle_spacing_mm": self.spin_baffle_spacing.value(),
+                "baffle_cut": self.spin_baffle_cut.value(),
+                "tube_material": self.combo_tube_mat.currentText(),
+                "is_finned": self.chk_finned.isChecked(),
+            }
+            html_content = get_exchanger_3d_html(geom)
+            temp_path = os.path.join(tempfile.gettempdir(), "exchanger_3d_teardown.html")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            webbrowser.open(f"file://{temp_path}")
+        except Exception as exc:
+            self.show_error("Hata", f"3D modeli açılamadı: {exc}", exc)
 
     def show_error(self, title, message, exc=None):
         if exc is not None:
@@ -1076,12 +1186,17 @@ class HeatExchangerDesktopApp(QMainWindow):
             self,
             "Raporu Kaydet",
             "isi_degistirici_raporu.pdf",
-            "PDF Files (*.pdf);;TEMA Datasheet PDF (*.pdf);;CSV Tablo (*.csv);;Text Files (*.txt);;All Files (*)",
+            "PDF Files (*.pdf);;TEMA Datasheet PDF (*.pdf);;Excel Tablosu (*.xlsx);;CSV Tablo (*.csv);;Text Files (*.txt);;All Files (*)",
             options=options,
         )
         if fileName:
             try:
-                if selected_filter.startswith("CSV") or fileName.lower().endswith(".csv"):
+                if selected_filter.startswith("Excel") or fileName.lower().endswith(".xlsx"):
+                    if not fileName.lower().endswith(".xlsx"):
+                        fileName += ".xlsx"
+                    with open(fileName, "wb") as f:
+                        f.write(export_calculation_excel(self.last_report_context))
+                elif selected_filter.startswith("CSV") or fileName.lower().endswith(".csv"):
                     if not fileName.lower().endswith(".csv"):
                         fileName += ".csv"
                     with open(fileName, "w", encoding="utf-8") as f:
@@ -1164,9 +1279,8 @@ class HeatExchangerDesktopApp(QMainWindow):
             self.last_report_context["images"] = images
 
     def append_log(self, msg, levelno):
-        if len(self.all_logs) > 5000:
-            self.all_logs.pop(0)  # Keep max 5000 lines
         self.all_logs.append((msg, levelno))
+        self.filter_and_display_last_log(msg, levelno)
 
     def filter_and_display_last_log(self, msg, levelno):
         level_map = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
@@ -1442,12 +1556,12 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "R_f_o": self.spin_rf_o.value(),
                 "tube_mat": self.combo_tube_mat.currentText(),
                 "hot_tube": self.combo_hot_tube.currentText(),
-                "cp_hot": get_fluid_data(self.combo_hot.currentText()).get("cp", 1100.0),
-                "density_hot": get_fluid_data(self.combo_hot.currentText()).get("density", 0.5),
+                "cp_hot": (get_fluid_data(self.combo_hot.currentText()) or {}).get("cp", 1100.0),
+                "density_hot": (get_fluid_data(self.combo_hot.currentText()) or {}).get("density", 0.5),
                 "mu_hot": self.spin_mu_hot.value(),
                 "k_hot": self.spin_k_hot.value(),
-                "cp_cold": get_fluid_data(self.combo_cold.currentText()).get("cp", 2000.0),
-                "density_cold": get_fluid_data(self.combo_cold.currentText()).get("density", 850.0),
+                "cp_cold": (get_fluid_data(self.combo_cold.currentText()) or {}).get("cp", 2000.0),
+                "density_cold": (get_fluid_data(self.combo_cold.currentText()) or {}).get("density", 850.0),
                 "mu_cold": self.spin_mu_cold.value(),
                 "k_cold": self.spin_k_cold.value(),
                 "is_finned": self.chk_finned.isChecked(),
@@ -1619,8 +1733,8 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "fin_type": "rectangular" if "Rectangular" in self.combo_fin_type.currentText() else "annular",
                 "fin_attachment": self.combo_fin_attachment.currentText(),
                 "api661_fin_type": self.combo_fin_attachment.currentText(),
-                "pitch": self.spin_do.value() * 2 / 1000.0,
-                "pitch_parallel": self.spin_do.value() * 2 / 1000.0,
+                "pitch": (self.spin_do.value() * (2.0 if self.chk_finned.isChecked() else 1.25)) / 1000.0,
+                "pitch_parallel": (self.spin_do.value() * (2.0 if self.chk_finned.isChecked() else 1.25)) / 1000.0,
                 "tube_layout_angle": self.combo_layout_angle.currentText(),
                 "tube_arrangement": "staggered",
                 "baffle_spacing": self.spin_baffle_spacing.value() / 1000.0,
@@ -1631,6 +1745,11 @@ class HeatExchangerDesktopApp(QMainWindow):
                 "D_shell": self.spin_d_shell.value() / 1000.0,
                 "R_f_i": self.spin_rf_i.value(),
                 "R_f_o": self.spin_rf_o.value(),
+                "design_pressure": 10e5,
+                "design_stress": 118e6,
+                "CA": 0.003,
+                "joint_eff": 0.85,
+                "tema_class": "R",
             },
         }
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 
-from exceptions import FluidPropertyError
+from exceptions import FluidPropertyError, MissingDependencyError
 
 # Kapsamlı Akışkan Veritabanı
 # Arayüzlerde (Streamlit ve PyQt5) kullanıcıya seçtirilecek hazır akışkanların listesi.
@@ -47,6 +48,8 @@ FLUID_OPTIONS: dict = {
             "is_coolprop": False,
             "cp": 2200.0,
             "density": 850.0,
+            "mu": 0.015,
+            "k_cond": 0.125,
         },
     },
     "Glikol ve Donma Önleyiciler (Glycols)": {
@@ -159,15 +162,23 @@ def materialize_fluid_data(fluid_data, T_c=None):
         cp_c = data.get("cp_c", 0.0)
         data["cp"] = cp_a + cp_b * T_c + cp_c * T_c * T_c
 
-        # Dynamic viscosity: linear correlation if available
-        if data.get("mu_a") is not None:
+        # Dynamic viscosity: Andrade exponential correlation (mu = exp(A + B/T)) or linear fallback
+        if data.get("mu_andrade_a") is not None and data.get("mu_andrade_b") is not None:
+            t_k = max(1.0, T_c + 273.15)
+            data["mu"] = max(1e-6, float(math.exp(data["mu_andrade_a"] + data["mu_andrade_b"] / t_k)))
+        elif data.get("mu_a") is not None:
             mu_a = data["mu_a"]
             mu_b = data.get("mu_b", 0.0)
             data["mu"] = max(1e-6, mu_a + mu_b * T_c)
+        elif data.get("mu") is None:
+            data["mu"] = max(0.001, 0.035 - 0.0001 * max(0.0, T_c))
+
         if data.get("k_a") is not None:
             k_a = data["k_a"]
             k_b = data.get("k_b", 0.0)
             data["k_cond"] = max(0.01, k_a + k_b * T_c)
+        elif data.get("k_cond") is None:
+            data["k_cond"] = max(0.08, 0.135 - 0.00008 * max(0.0, T_c))
 
         data["is_coolprop"] = False
 
@@ -191,6 +202,9 @@ def get_chedl_mixture_fluid_data(comps, mole_fracs, T_c, P_pa):
             "k_cond": mix.k,
             "property_source": "ChEDL/thermo",
         }
+    except (ImportError, ModuleNotFoundError) as exc:
+        logger.warning("thermo kütüphanesi bulunamadı: %s", exc)
+        raise MissingDependencyError(f"ChEDL/thermo kütüphanesi yüklü değil: {exc}") from exc
     except FileNotFoundError as exc:
         logger.exception(
             "ChEDL/thermo veri dosyası bulunamadı. PyInstaller build komutunda chemicals/thermo data dosyaları eksik olabilir."
@@ -199,6 +213,9 @@ def get_chedl_mixture_fluid_data(comps, mole_fracs, T_c, P_pa):
             f"{exc}. Paketleme hatası: ChEDL/thermo/chemicals veri dosyaları exe içine dahil edilmemiş. "
             "Release paketini --collect-data chemicals --collect-data thermo --collect-data fluids ile yeniden oluşturun."
         ) from exc
+    except Exception as exc:
+        logger.warning("ChEDL/thermo karışım hesaplama hatası: %s", exc)
+        raise FluidPropertyError(f"ChEDL/thermo karışım özellikleri hesaplanamadı: {exc}") from exc
 
 
 def get_mixture_fluid_data(components, comp_type="mole", T_c=200.0, P_pa=101325.0):

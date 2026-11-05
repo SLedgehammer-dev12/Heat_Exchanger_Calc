@@ -19,7 +19,7 @@ dependencies = [
     "matplotlib>=3.5",
     "numpy>=1.21",
     "pandas>=1.4",
-    "pint>=0.22",
+    "openpyxl>=3.0",
     "pychemengg>=0.1a11",
     "scipy>=1.9",
     "thermo>=0.6",
@@ -53,7 +53,7 @@ exclude = ["tests*", ".github*"]
 [tool.ruff]
 target-version = "py310"
 line-length = 120
-extend-exclude = ["*.sh", "*.ps1", "*.spec"]
+extend-exclude = ["*.sh", "*.ps1", "*.spec", ".agents", ".opencode", "skills", "hooks"]
 
 [tool.ruff.lint]
 select = [

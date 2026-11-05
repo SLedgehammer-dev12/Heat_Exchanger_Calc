@@ -5,6 +5,8 @@ import unittest
 import config
 from heat_exchanger import EXCHANGER_TYPE_FINNED, FinTubeHeatExchanger, Fluid
 from reporting import (
+    build_calculation_report,
+    build_calculation_report_pdf,
     export_calculation_csv,
     export_profile_csv,
     generate_tema_datasheet_pdf,
@@ -159,6 +161,51 @@ class TestDatasheetAndExportOutputs(unittest.TestCase):
         self.assertIn("Segment,Length_Fraction,T_hot_C,T_cold_C,Delta_T_C", profile_csv)
         self.assertIn("90.0", profile_csv)
         self.assertIn("25.0", profile_csv)
+
+    def test_reporting_when_actual_result_is_none(self):
+        """Verify all reporting/export functions succeed when actual_result is None (Design mode)."""
+        ctx_none = dict(self.sample_context)
+        ctx_none["actual_result"] = None
+        ctx_none["geo_result"] = {
+            "U": 820.0,
+            "A_total": 12.0,
+            "h_i": 2400.0,
+            "h_o": 1750.0,
+            "delta_p_tube": 18500.0,
+            "delta_p_shell": 24000.0,
+            "pump_power_tube": 120.0,
+            "pump_power_shell": 150.0,
+            "Re_i": 8500.0,
+            "Re_o": 4200.0,
+            "R_wall": 0.00005,
+            "eta_fin": 0.95,
+            "eta_o": 0.96,
+        }
+
+        # 1. TEMA Datasheet PDF
+        pdf_bytes = generate_tema_datasheet_pdf(ctx_none)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+        # 2. Calculation CSV Export
+        csv_str = export_calculation_csv(ctx_none)
+        self.assertIsInstance(csv_str, str)
+        self.assertIn("HEAT EXCHANGER CALCULATION EXPORT", csv_str)
+
+        # 3. Calculation Report PDF
+        report_pdf = build_calculation_report_pdf(ctx_none)
+        self.assertIsInstance(report_pdf, bytes)
+        self.assertTrue(report_pdf.startswith(b"%PDF-"))
+
+        # 4. Calculation Report Text
+        report_txt = build_calculation_report(ctx_none)
+        self.assertIsInstance(report_txt, str)
+        self.assertIn("ISI DEGISTIRICI DETAYLI HESAP RAPORU", report_txt)
+
+        # 5. Profile CSV Export
+        prof_csv = export_profile_csv(ctx_none)
+        self.assertIsInstance(prof_csv, str)
+        self.assertIn("Segment,Length_Fraction,T_hot_C,T_cold_C,Delta_T_C", prof_csv)
 
 
 if __name__ == "__main__":

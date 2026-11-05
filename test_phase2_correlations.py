@@ -109,6 +109,10 @@ class TestPhase2Correlations(unittest.TestCase):
         self.assertGreater(res_seg["T_h_profile"][0], res_seg["T_h_profile"][-1])
         # Soğuk akışkan çıkıştan girişe (ters akış profili)
         self.assertGreater(res_seg["T_c_profile"][0], res_seg["T_c_profile"][-1])
+        # Yerel sıcaklık farkları ve minimum yaklaşım
+        self.assertIn("min_dT_local [C]", res_seg)
+        self.assertIn("dT_local_profile", res_seg)
+        self.assertGreater(res_seg["min_dT_local [C]"], 0.0)
 
 
 if __name__ == "__main__":

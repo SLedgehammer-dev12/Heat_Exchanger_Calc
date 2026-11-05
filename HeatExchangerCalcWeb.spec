@@ -11,14 +11,13 @@ hiddenimports = [
     'numpy._core._exceptions', 'app_shared', 'engineering_utils', 'reportlab',
     'app_web', 'fluids_db', 'heat_exchanger', 'reporting', 'updater',
     'version', 'logging_config',
-    'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
+    'config', 'units', 'model_types', 'i18n', 'openpyxl', 'iapws',
     'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
 ]
 datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')
 datas += collect_data_files('fluids')
 datas += collect_data_files('ht')
-datas += collect_data_files('pint')
 datas += collect_data_files('iapws')
 datas += copy_metadata('streamlit')
 for pkg in ['reportlab', 'numpy', 'scipy', 'certifi', 'streamlit']:

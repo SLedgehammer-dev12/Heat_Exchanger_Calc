@@ -25,7 +25,7 @@ HIDDEN_IMPORTS=(
     --hidden-import units
     --hidden-import model_types
     --hidden-import i18n
-    --hidden-import pint
+    --hidden-import openpyxl
     --hidden-import iapws
     --hidden-import exceptions
     --hidden-import helpers
@@ -49,7 +49,6 @@ COLLECT_ARGS=(
     --collect-data thermo
     --collect-data fluids
     --collect-data ht
-    --collect-data pint
     --collect-data iapws
     --collect-all reportlab
     --collect-all numpy

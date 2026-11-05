@@ -1,11 +1,7 @@
+import logging
 import unicodedata
-from typing import Any
 
-import pint
-
-_ureg: Any = pint.UnitRegistry()
-_ureg.define("degC = kelvin; offset: 273.15")
-_ureg.define("degF = 5/9 * kelvin; offset: 255.37222222")
+logger = logging.getLogger(__name__)
 
 UNIT_MAP = {
     "kg/s": "kg/s",
@@ -63,26 +59,53 @@ def _resolve_unit(raw):
     return None
 
 
-def to_kg_s(val, unit, density):
-    pint_unit = _resolve_unit(unit)
-    if pint_unit in ("m**3/s", "m**3/hour", "ft**3/min"):
-        q_vol = _ureg.Quantity(val, pint_unit)
-        q_mass = q_vol * _ureg.Quantity(density, "kg/m**3")
-        return q_mass.to("kg/s").magnitude
-    if pint_unit:
-        return _ureg.Quantity(val, pint_unit).to("kg/s").magnitude
-    return float(val)
+def to_kg_s(val, unit, density=1.0):
+    u = _resolve_unit(unit)
+    v = float(val)
+    rho = float(density) if density is not None else 1.0
+    if u == "kg/s":
+        return v
+    if u == "kg/hour":
+        return v / 3600.0
+    if u == "lb/s":
+        return v * 0.45359237
+    if u == "lb/hour":
+        return (v * 0.45359237) / 3600.0
+    if u == "m**3/s":
+        return v * rho
+    if u == "m**3/hour":
+        return (v * rho) / 3600.0
+    if u == "ft**3/min":
+        return (v * 0.028316846592 * rho) / 60.0
+    if u is None and unit is not None:
+        logger.warning("Bilinmeyen debi birimi '%s', ham değer dönülüyor.", unit)
+    return v
 
 
 def to_celsius(val, unit):
-    pint_unit = _resolve_unit(unit)
-    if pint_unit:
-        return _ureg.Quantity(val, pint_unit).to("degC").magnitude
-    return float(val)
+    u = _resolve_unit(unit)
+    v = float(val)
+    if u == "degC":
+        return v
+    if u == "degF":
+        return (v - 32.0) * 5.0 / 9.0
+    if u == "kelvin":
+        return v - 273.15
+    if u is None and unit is not None:
+        logger.warning("Bilinmeyen sıcaklık birimi '%s', ham değer dönülüyor.", unit)
+    return v
 
 
 def from_celsius(val, unit):
-    pint_unit = _resolve_unit(unit)
-    if pint_unit:
-        return _ureg.Quantity(val, "degC").to(pint_unit).magnitude
-    return float(val)
+    u = _resolve_unit(unit)
+    v = float(val)
+    if u == "degC":
+        return v
+    if u == "degF":
+        return (v * 9.0 / 5.0) + 32.0
+    if u == "kelvin":
+        return v + 273.15
+    if u is None and unit is not None:
+        logger.warning("Bilinmeyen sıcaklık birimi '%s', ham değer dönülüyor.", unit)
+    return v
+

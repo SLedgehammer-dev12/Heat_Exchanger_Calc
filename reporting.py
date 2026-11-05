@@ -61,15 +61,7 @@ def _add_geometry(lines, geometry):
     _add_mapping(lines, {GEOMETRY_LABELS.get(k, k): v for k, v in geometry.items()}, skip_empty=True)
 
 
-def _collect_warnings(*results):
-    warnings = []
-    for result in results:
-        if not result:
-            continue
-        for msg in result.get("warnings", []):
-            if msg not in warnings:
-                warnings.append(msg)
-    return warnings
+from engineering_utils import result_warnings as _collect_warnings
 
 
 def _flow_formula(flow_type, source):
@@ -88,15 +80,15 @@ def _flow_formula(flow_type, source):
 
 def build_calculation_report(context):
     """Detaylı metin raporu üretir."""
-    inputs = context["inputs"]
-    methods = context["methods"]
-    fluids = context["fluids"]
-    results = context["results"]
+    inputs = context.get("inputs") or {}
+    methods = context.get("methods") or {}
+    fluids = context.get("fluids") or {}
+    results = context.get("results") or {}
     geometry = context.get("geometry") or {}
-    geo_result = context.get("geo_result")
+    geo_result = context.get("geo_result") or {}
     actual_result = context.get("actual_result")
     crosscheck_results = context.get("crosscheck_results") or []
-    selected = results["main"]
+    selected = (results.get("main") if isinstance(results, dict) else {}) or {}
 
     lines = [
         _("ISI DEGISTIRICI DETAYLI HESAP RAPORU"),
@@ -114,11 +106,11 @@ def build_calculation_report(context):
         {
             "Hesap amacı": methods.get("Hesap amacı"),
             "Akış konfigürasyonu": methods.get("Akış tipi"),
-            "Sıcak akışkan": fluids["hot"].get("label"),
+            "Sıcak akışkan": (fluids.get("hot") or {}).get("label"),
             "Sıcak debi - kullanıcı girdisi": inputs.get("m_hot_raw"),
             "Sıcak debi - hesapta kullanılan": f"{_fmt(inputs.get('m_hot_kg_s'), 6)} kg/s",
             "Sıcak giriş sıcaklığı": f"{_fmt(inputs.get('T_hot_in_C'), 3)} °C",
-            "Soğuk akışkan": fluids["cold"].get("label"),
+            "Soğuk akışkan": (fluids.get("cold") or {}).get("label"),
             "Soğuk debi - kullanıcı girdisi": inputs.get("m_cold_raw"),
             "Soğuk debi - hesapta kullanılan": f"{_fmt(inputs.get('m_cold_kg_s'), 6)} kg/s",
             "Soğuk giriş sıcaklığı": f"{_fmt(inputs.get('T_cold_in_C'), 3)} °C",
@@ -135,7 +127,7 @@ def build_calculation_report(context):
 
     _section(lines, "3. Akiskan Ozellikleri")
     for side, label in [("hot", "Sıcak akışkan"), ("cold", "Soğuk akışkan")]:
-        data = fluids[side]
+        data = fluids.get(side) or {}
         lines.append(f"{label}: {data.get('label')}")
         _add_mapping(
             lines,
@@ -209,8 +201,8 @@ def build_calculation_report(context):
         )
 
     _section(lines, "6. Ara Hesaplar")
-    C_h = (inputs.get("m_hot_kg_s") or 0.0) * (fluids.get("hot", {}).get("cp") or 0.0)
-    C_c = (inputs.get("m_cold_kg_s") or 0.0) * (fluids.get("cold", {}).get("cp") or 0.0)
+    C_h = (inputs.get("m_hot_kg_s") or 0.0) * ((fluids.get("hot") or {}).get("cp") or 0.0)
+    C_c = (inputs.get("m_cold_kg_s") or 0.0) * ((fluids.get("cold") or {}).get("cp") or 0.0)
     C_min = min(C_h, C_c)
     C_max = max(C_h, C_c)
     q_max = C_min * ((inputs.get("T_hot_in_C") or 0.0) - (inputs.get("T_cold_in_C") or 0.0))
@@ -234,7 +226,7 @@ def build_calculation_report(context):
             "Metot": selected.get("Method"),
             "Kaynak": selected.get("Source"),
             "Durum": selected.get("status", "ok"),
-            "Q": f"{_fmt(selected.get('Q [W]') / 1000, 4)} kW",
+            "Q": f"{_fmt(selected.get('Q [W]') / 1000, 4)} kW" if selected.get("Q [W]") is not None else "-",
             "epsilon": _fmt(selected.get("epsilon"), 6),
             "Sıcak çıkış": f"{_fmt(selected.get('T_hot_out [C]'), 4)} °C",
             "Soğuk çıkış": f"{_fmt(selected.get('T_cold_out [C]'), 4)} °C",
@@ -246,9 +238,9 @@ def build_calculation_report(context):
         _add_mapping(
             lines,
             {
-                "Sıcak taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_hot [W]') / 1000, 4)} kW",
-                "Soğuk taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_cold [W]') / 1000, 4)} kW",
-                "Ortalama Q": f"{_fmt(actual_result.get('Q_avg [W]') / 1000, 4)} kW",
+                "Sıcak taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_hot [W]') / 1000, 4)} kW" if actual_result.get("Q_hot [W]") is not None else "-",
+                "Soğuk taraftan hesaplanan Q": f"{_fmt(actual_result.get('Q_cold [W]') / 1000, 4)} kW" if actual_result.get("Q_cold [W]") is not None else "-",
+                "Ortalama Q": f"{_fmt(actual_result.get('Q_avg [W]') / 1000, 4)} kW" if actual_result.get("Q_avg [W]") is not None else "-",
                 "Gerçekleşen epsilon": _fmt(actual_result.get("epsilon_actual"), 6),
                 "Gereken U": f"{_fmt(actual_result.get('U_required'), 4)} W/m2.K",
                 "LMTD": f"{_fmt(actual_result.get('LMTD'), 4)} K",
@@ -261,11 +253,12 @@ def build_calculation_report(context):
         ref_q = selected.get("Q [W]")
         for result in crosscheck_results:
             diff = ""
-            if ref_q and ref_q > 0:
+            if ref_q and ref_q > 0 and result.get("Q [W]") is not None:
                 diff = f", seçili sonuca göre Q sapması = {_fmt(abs(result.get('Q [W]') - ref_q) / ref_q * 100, 4)} %"
+            q_res = f"{_fmt(result.get('Q [W]') / 1000, 4)} kW" if result.get("Q [W]") is not None else "-"
             lines.append(
                 f"- {result.get('Method')} / {result.get('Source')}: "
-                f"Q={_fmt(result.get('Q [W]') / 1000, 4)} kW, "
+                f"Q={q_res}, "
                 f"Th,out={_fmt(result.get('T_hot_out [C]'), 3)} °C, "
                 f"Tc,out={_fmt(result.get('T_cold_out [C]'), 3)} °C, "
                 f"durum={result.get('status', 'ok')}{diff}"
@@ -351,7 +344,7 @@ def build_calculation_report_pdf(context):
     note = ParagraphStyle("Note", parent=body, fontSize=7.5, leading=10, textColor=colors.HexColor("#666666"))
 
     def p(text, style=cell):
-        safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("  ", "&nbsp;&nbsp;")
+        safe = str(text if text is not None else "-").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("  ", "&nbsp;&nbsp;")
         return Paragraph(safe, style)
 
     def hr():
@@ -362,15 +355,15 @@ def build_calculation_report_pdf(context):
     story.append(Paragraph(f"Oluşturulma: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", note))
     story.append(hr())
 
-    inputs = context["inputs"]
-    methods = context["methods"]
-    fluids = context["fluids"]
-    results = context["results"]
+    inputs = context.get("inputs") or {}
+    methods = context.get("methods") or {}
+    fluids = context.get("fluids") or {}
+    results = context.get("results") or {}
     geometry = context.get("geometry") or {}
-    geo_result = context.get("geo_result")
-    actual_result = context.get("actual_result")
+    geo_result = context.get("geo_result") or {}
+    actual_result = context.get("actual_result") or {}
     crosscheck_results = context.get("crosscheck_results") or []
-    selected = results["main"]
+    selected = (results.get("main") if isinstance(results, dict) else {}) or {}
 
     # --- 1. Yöntemler ---
     story.append(Paragraph("1. Seçilen Yöntemler", h2))
@@ -393,10 +386,10 @@ def build_calculation_report_pdf(context):
     input_data = [
         ("Hesap amacı", methods.get("Hesap amacı")),
         ("Akış konfigürasyonu", methods.get("Akış tipi")),
-        ("Sıcak akışkan", fluids["hot"].get("label")),
+        ("Sıcak akışkan", (fluids.get("hot") or {}).get("label", "-")),
         ("Sıcak debi", f"{_fmt(inputs.get('m_hot_kg_s'), 6)} kg/s"),
         ("Sıcak giriş", f"{_fmt(inputs.get('T_hot_in_C'), 3)} °C"),
-        ("Soğuk akışkan", fluids["cold"].get("label")),
+        ("Soğuk akışkan", (fluids.get("cold") or {}).get("label", "-")),
         ("Soğuk debi", f"{_fmt(inputs.get('m_cold_kg_s'), 6)} kg/s"),
         ("Soğuk giriş", f"{_fmt(inputs.get('T_cold_in_C'), 3)} °C"),
     ]
@@ -427,11 +420,13 @@ def build_calculation_report_pdf(context):
         ("Viskozite (Pa.s)", "mu"),
         ("İletkenlik (W/m.K)", "k_cond"),
     ]:
+        h_val = (fluids.get("hot") or {}).get(tr)
+        c_val = (fluids.get("cold") or {}).get(tr)
         rows.append(
             [
                 p(key),
-                p(f"{_fmt(fluids['hot'].get(tr), 4)}" if fluids["hot"].get(tr) else "-"),
-                p(f"{_fmt(fluids['cold'].get(tr), 4)}" if fluids["cold"].get(tr) else "-"),
+                p(f"{_fmt(h_val, 4)}" if h_val is not None else "-"),
+                p(f"{_fmt(c_val, 4)}" if c_val is not None else "-"),
             ]
         )
     t = Table(rows, colWidths=[50 * mm, 55 * mm, 55 * mm])
@@ -562,8 +557,8 @@ def build_calculation_report_pdf(context):
 
     # --- 6. Ara Hesaplar ---
     story.append(Paragraph("6. Ara Hesaplar", h2))
-    C_h = (inputs.get("m_hot_kg_s") or 0.0) * (fluids.get("hot", {}).get("cp") or 0.0)
-    C_c = (inputs.get("m_cold_kg_s") or 0.0) * (fluids.get("cold", {}).get("cp") or 0.0)
+    C_h = (inputs.get("m_hot_kg_s") or 0.0) * ((fluids.get("hot") or {}).get("cp") or 0.0)
+    C_c = (inputs.get("m_cold_kg_s") or 0.0) * ((fluids.get("cold") or {}).get("cp") or 0.0)
     C_min = min(C_h, C_c)
     C_max = max(C_h, C_c)
     q_max = C_min * ((inputs.get("T_hot_in_C") or 0.0) - (inputs.get("T_cold_in_C") or 0.0))
@@ -583,11 +578,12 @@ def build_calculation_report_pdf(context):
 
     # --- 7. Çözüm Sonucu ---
     story.append(Paragraph("7. Çözüm Sonucu", h2))
+    q_sel = selected.get("Q [W]")
     res_data = [
         ("Metot", selected.get("Method")),
         ("Kaynak", selected.get("Source")),
         ("Durum", selected.get("status", "ok")),
-        ("Q (kW)", f"{_fmt(selected.get('Q [W]') / 1000, 4)}"),
+        ("Q (kW)", f"{_fmt(q_sel / 1000, 4)}" if q_sel is not None else "-"),
         ("ε", f"{_fmt(selected.get('epsilon'), 6)}"),
         ("Sıcak çıkış (°C)", f"{_fmt(selected.get('T_hot_out [C]'), 4)}"),
         ("Soğuk çıkış (°C)", f"{_fmt(selected.get('T_cold_out [C]'), 4)}"),
@@ -607,10 +603,13 @@ def build_calculation_report_pdf(context):
     # --- 8. Performans ---
     if actual_result:
         story.append(Paragraph("8. Performans Değerlendirmesi", h2))
+        q_h = actual_result.get("Q_hot [W]")
+        q_c = actual_result.get("Q_cold [W]")
+        q_a = actual_result.get("Q_avg [W]")
         perf_data = [
-            ("Q_hot (kW)", f"{_fmt(actual_result.get('Q_hot [W]') / 1000, 4)}"),
-            ("Q_cold (kW)", f"{_fmt(actual_result.get('Q_cold [W]') / 1000, 4)}"),
-            ("Q_avg (kW)", f"{_fmt(actual_result.get('Q_avg [W]') / 1000, 4)}"),
+            ("Q_hot (kW)", f"{_fmt(q_h / 1000, 4)}" if q_h is not None else "-"),
+            ("Q_cold (kW)", f"{_fmt(q_c / 1000, 4)}" if q_c is not None else "-"),
+            ("Q_avg (kW)", f"{_fmt(q_a / 1000, 4)}" if q_a is not None else "-"),
             ("ε_actual", f"{_fmt(actual_result.get('epsilon_actual'), 6)}"),
             ("U_required (W/m².K)", f"{_fmt(actual_result.get('U_required'), 4)}"),
             ("LMTD (K)", f"{_fmt(actual_result.get('LMTD'), 4)}"),
@@ -635,12 +634,13 @@ def build_calculation_report_pdf(context):
         ref_q = selected.get("Q [W]")
         for r in crosscheck_results:
             diff = ""
-            if ref_q and ref_q > 0:
+            if ref_q and ref_q > 0 and r.get("Q [W]") is not None:
                 diff = f" sapma={_fmt(abs(r.get('Q [W]') - ref_q) / ref_q * 100, 4)}%"
+            q_ck = r.get("Q [W]")
             rows.append(
                 [
                     p(f"{r.get('Method')}/{r.get('Source')}"),
-                    p(f"{_fmt(r.get('Q [W]') / 1000, 4)}"),
+                    p(f"{_fmt(q_ck / 1000, 4)}" if q_ck is not None else "-"),
                     p(f"{_fmt(r.get('T_hot_out [C]'), 3)}"),
                     p(f"{_fmt(r.get('T_cold_out [C]'), 3)}"),
                     p(f"{r.get('status', 'ok')}{diff}"),
@@ -774,13 +774,14 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
     )
     story.append(Spacer(1, 1.5 * mm))
 
-    inputs = context.get("inputs", {})
-    methods = context.get("methods", {})
-    fluids = context.get("fluids", {})
-    results = context.get("results", {})
-    geometry = context.get("geometry", {})
-    actual_result = context.get("actual_result", {})
-    selected = results.get("main", {})
+    inputs = context.get("inputs") or {}
+    methods = context.get("methods") or {}
+    fluids = context.get("fluids") or {}
+    results = context.get("results") or {}
+    geometry = context.get("geometry") or {}
+    actual_result = context.get("actual_result") or {}
+    geo_result = context.get("geo_result") or {}
+    selected = (results.get("main") if isinstance(results, dict) else {}) or {}
 
     # 2. PROJE & GENEL TANIM TABLOSU
     info_data = [
@@ -823,8 +824,8 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
     ]
 
     hot_is_tube = geometry.get("hot_is_tube", True)
-    tube_fluid = fluids.get("hot" if hot_is_tube else "cold", {})
-    shell_fluid = fluids.get("cold" if hot_is_tube else "hot", {})
+    tube_fluid = fluids.get("hot" if hot_is_tube else "cold") or {}
+    shell_fluid = fluids.get("cold" if hot_is_tube else "hot") or {}
 
     m_tube = inputs.get("m_hot_kg_s") if hot_is_tube else inputs.get("m_cold_kg_s")
     m_shell = inputs.get("m_cold_kg_s") if hot_is_tube else inputs.get("m_hot_kg_s")
@@ -836,8 +837,16 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
     t_out_shell = selected.get("T_cold_out [C]") if hot_is_tube else selected.get("T_hot_out [C]")
 
     q_kw = (selected.get("Q [W]") or actual_result.get("Q_avg [W]") or 0.0) / 1000.0
-    dp_tube_kpa = actual_result.get("delta_p_tube_kPa") or actual_result.get("delta_p_tube [kPa]") or 0.0
-    dp_shell_kpa = actual_result.get("delta_p_shell_kPa") or actual_result.get("delta_p_shell [kPa]") or 0.0
+    dp_tube_kpa = (
+        actual_result.get("delta_p_tube_kPa")
+        or actual_result.get("delta_p_tube [kPa]")
+        or (geo_result.get("delta_p_tube", 0.0) / 1000.0 if geo_result.get("delta_p_tube") else 0.0)
+    )
+    dp_shell_kpa = (
+        actual_result.get("delta_p_shell_kPa")
+        or actual_result.get("delta_p_shell [kPa]")
+        or (geo_result.get("delta_p_shell", 0.0) / 1000.0 if geo_result.get("delta_p_shell") else 0.0)
+    )
 
     perf_rows = [
         [p("Akışkan Adı"), p("-"), p(tube_fluid.get("label", "-")), p(shell_fluid.get("label", "-"))],
@@ -878,8 +887,8 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
         [
             p("Taşınım Katsayısı (h)"),
             p("W/m²·K"),
-            p(f"{_fmt(actual_result.get('h_i'), 1)}"),
-            p(f"{_fmt(actual_result.get('h_o'), 1)}"),
+            p(f"{_fmt(actual_result.get('h_i') or geo_result.get('h_i'), 1)}"),
+            p(f"{_fmt(actual_result.get('h_o') or geo_result.get('h_o'), 1)}"),
         ],
         [
             p("Toplam Isı Yükü (Q)"),
@@ -896,14 +905,14 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
         [
             p("Toplam Isı Transfer Katsayısı (U)"),
             p("W/m²·K"),
-            p(f"<b>{_fmt(actual_result.get('U') or selected.get('U'), 1)}</b>"),
+            p(f"<b>{_fmt(actual_result.get('U') or selected.get('U') or geo_result.get('U'), 1)}</b>"),
             p(f"Gerekli U: {_fmt(actual_result.get('U_required') or selected.get('U_required'), 1)}"),
         ],
         [
             p("Efektif Isı Transfer Alanı (A)"),
             p("m²"),
-            p(f"<b>{_fmt(actual_result.get('A_total') or selected.get('A'), 2)} m²</b>", cell_bold),
-            p(f"Yüzey Verimi (η_o): {_fmt(actual_result.get('eta_o', 1.0) * 100, 1)}%"),
+            p(f"<b>{_fmt(actual_result.get('A_total') or selected.get('A') or geo_result.get('A_total'), 2)} m²</b>", cell_bold),
+            p(f"Yüzey Verimi (η_o): {_fmt((actual_result.get('eta_o') or geo_result.get('eta_o') or 1.0) * 100, 1)}%"),
         ],
     ]
 
@@ -956,6 +965,10 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
     fin_h_mm = (geometry.get("fin_height") or 0.0159) * 1000.0
     fin_t_mm = (geometry.get("fin_thickness") or 0.0004) * 1000.0
     fin_dens = geometry.get("fin_density") or 400
+    p_tube_des = float(geometry.get("design_pressure_tube_bar") or (geometry.get("design_pressure", 10.0e5) / 1e5))
+    p_shell_des = float(geometry.get("design_pressure_shell_bar") or (geometry.get("design_pressure", 10.0e5) / 1e5))
+    p_tube_test = p_tube_des * 1.3
+    p_shell_test = p_shell_des * 1.3
 
     mech_rows = [
         [
@@ -992,13 +1005,13 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
             p("Kanat Boyutları (Yüks. × Kal. × Sıklık)"),
             p("-"),
             p(f"Y:{fin_h_mm:.1f}mm, K:{fin_t_mm:.2f}mm, {fin_dens:.0f} fpm" if is_finned else "-"),
-            p(f"Kanat Verimi: η_f = {actual_result.get('eta_fin', 1.0):.3f}" if is_finned else "-"),
+            p(f"Kanat Verimi: η_f = {(actual_result.get('eta_fin') or geo_result.get('eta_fin') or 1.0):.3f}" if is_finned else "-"),
         ],
         [
             p("Tasarım / Hidrostatik Test Basıncı"),
             p("bar(g)"),
-            p("Tasarım: 10.0 bar / Test: 13.0 bar"),
-            p("Tasarım: 10.0 bar / Test: 13.0 bar"),
+            p(f"Tasarım: {p_tube_des:.1f} bar / Test: {p_tube_test:.1f} bar"),
+            p(f"Tasarım: {p_shell_des:.1f} bar / Test: {p_shell_test:.1f} bar"),
         ],
         [
             p("Korozyon Payı (CA)"),
@@ -1031,7 +1044,7 @@ def generate_tema_datasheet_pdf(context: dict) -> bytes:
 
     # 5. UYARILAR VE ŞARTNAME NOTLARI
     notes = []
-    all_warns = _collect_warnings(selected, actual_result, context.get("geo_result"))
+    all_warns = _collect_warnings(selected, actual_result, geo_result)
     if all_warns:
         notes.extend(all_warns[:2])
     notes.append("İmalat ve kaynaklar ASME Section IX ve TEMA RCB standartlarına uygun olarak gerçekleştirilecektir.")
@@ -1071,22 +1084,23 @@ def export_calculation_csv(context: dict) -> str:
     # 1. Yöntemler ve Genel Bilgiler
     writer.writerow(["[1. METHODS & OPERATING MODE]"])
     writer.writerow(["Parameter", "Value"])
-    for k, v in context.get("methods", {}).items():
+    methods = context.get("methods") or {}
+    for k, v in methods.items():
         writer.writerow([k, v])
     writer.writerow([])
 
     # 2. Akışkan ve İşletme Koşulları
     writer.writerow(["[2. OPERATING CONDITIONS]"])
     writer.writerow(["Side", "Fluid", "Flow Rate [kg/s]", "T_in [C]", "T_out [C]"])
-    inputs = context.get("inputs", {})
-    fluids = context.get("fluids", {})
-    results = context.get("results", {})
-    selected = results.get("main", {})
+    inputs = context.get("inputs") or {}
+    fluids = context.get("fluids") or {}
+    results = context.get("results") or {}
+    selected = (results.get("main") if isinstance(results, dict) else {}) or context.get("selected_result") or {}
 
     writer.writerow(
         [
             "Hot Side",
-            fluids.get("hot", {}).get("label", "-"),
+            (fluids.get("hot") or {}).get("label", "-"),
             inputs.get("m_hot_kg_s", "-"),
             inputs.get("T_hot_in_C", "-"),
             selected.get("T_hot_out [C]", "-"),
@@ -1095,7 +1109,7 @@ def export_calculation_csv(context: dict) -> str:
     writer.writerow(
         [
             "Cold Side",
-            fluids.get("cold", {}).get("label", "-"),
+            (fluids.get("cold") or {}).get("label", "-"),
             inputs.get("m_cold_kg_s", "-"),
             inputs.get("T_cold_in_C", "-"),
             selected.get("T_cold_out [C]", "-"),
@@ -1106,21 +1120,22 @@ def export_calculation_csv(context: dict) -> str:
     # 3. Termal Performans Sonuçları
     writer.writerow(["[3. THERMAL PERFORMANCE]"])
     writer.writerow(["Metric", "Value", "Unit"])
-    actual = context.get("actual_result", {})
+    actual = context.get("actual_result") or {}
+    geo = context.get("geo_result") or {}
     metrics = [
         ("Heat Exchanged (Q)", selected.get("Q [W]"), "W"),
         ("Effectiveness (epsilon)", selected.get("epsilon"), "-"),
         ("LMTD", selected.get("LMTD") or actual.get("LMTD"), "C"),
         ("LMTD Correction Factor (F)", selected.get("F") or actual.get("F"), "-"),
-        ("Overall U (Calculated)", actual.get("U") or selected.get("U"), "W/m2.K"),
+        ("Overall U (Calculated)", actual.get("U") or selected.get("U") or geo.get("U"), "W/m2.K"),
         ("Required U", actual.get("U_required") or selected.get("U_required"), "W/m2.K"),
-        ("Heat Transfer Area (A)", actual.get("A_total") or selected.get("A"), "m2"),
-        ("Tube-side Pressure Drop", actual.get("delta_p_tube_kPa"), "kPa"),
-        ("Shell/Air-side Pressure Drop", actual.get("delta_p_shell_kPa"), "kPa"),
-        ("Inside HTC (h_i)", actual.get("h_i"), "W/m2.K"),
-        ("Outside HTC (h_o)", actual.get("h_o"), "W/m2.K"),
-        ("Fin Efficiency (eta_fin)", actual.get("eta_fin"), "-"),
-        ("Overall Surface Efficiency (eta_o)", actual.get("eta_o"), "-"),
+        ("Heat Transfer Area (A)", actual.get("A_total") or selected.get("A") or geo.get("A_total"), "m2"),
+        ("Tube-side Pressure Drop", actual.get("delta_p_tube_kPa") or (geo.get("delta_p_tube") / 1000.0 if geo.get("delta_p_tube") else None), "kPa"),
+        ("Shell/Air-side Pressure Drop", actual.get("delta_p_shell_kPa") or (geo.get("delta_p_shell") / 1000.0 if geo.get("delta_p_shell") else None), "kPa"),
+        ("Inside HTC (h_i)", actual.get("h_i") or geo.get("h_i"), "W/m2.K"),
+        ("Outside HTC (h_o)", actual.get("h_o") or geo.get("h_o"), "W/m2.K"),
+        ("Fin Efficiency (eta_fin)", actual.get("eta_fin") or geo.get("eta_fin"), "-"),
+        ("Overall Surface Efficiency (eta_o)", actual.get("eta_o") or geo.get("eta_o"), "-"),
     ]
     for m, val, unit in metrics:
         if val is not None:
@@ -1130,14 +1145,15 @@ def export_calculation_csv(context: dict) -> str:
     # 4. Geometri Parametreleri
     writer.writerow(["[4. GEOMETRY PARAMETERS]"])
     writer.writerow(["Parameter", "Value"])
-    for k, v in context.get("geometry", {}).items():
+    geometry = context.get("geometry") or {}
+    for k, v in geometry.items():
         writer.writerow([GEOMETRY_LABELS.get(k, k), v])
     writer.writerow([])
 
     # 5. Mekanik Tasarım Kontrolleri
     writer.writerow(["[5. MECHANICAL DESIGN (ASME / API 661)]"])
     writer.writerow(["Check Label", "Value", "Status"])
-    for row in mechanical_design_report(context.get("geometry", {})):
+    for row in mechanical_design_report(geometry):
         writer.writerow([row.get("label"), row.get("value"), row.get("status")])
     writer.writerow([])
 
@@ -1157,19 +1173,20 @@ def export_profile_csv(profile_data_or_context) -> str:
     t_h = []
     t_c = []
     if isinstance(profile_data_or_context, dict):
+        results_dict = profile_data_or_context.get("results") or {}
         res = (
             profile_data_or_context.get("actual_result")
-            or profile_data_or_context.get("results", {}).get("main")
+            or results_dict.get("main")
             or profile_data_or_context
         )
         t_h = res.get("T_h_profile") or []
         t_c = res.get("T_c_profile") or []
         if not t_h and "inputs" in profile_data_or_context:
-            inp = profile_data_or_context["inputs"]
+            inp = profile_data_or_context.get("inputs") or {}
             t_h_in = inp.get("T_hot_in_C", 100.0)
-            t_h_out = profile_data_or_context.get("results", {}).get("main", {}).get("T_hot_out [C]", 60.0)
+            t_h_out = (results_dict.get("main") or {}).get("T_hot_out [C]", 60.0)
             t_c_in = inp.get("T_cold_in_C", 20.0)
-            t_c_out = profile_data_or_context.get("results", {}).get("main", {}).get("T_cold_out [C]", 50.0)
+            t_c_out = (results_dict.get("main") or {}).get("T_cold_out [C]", 50.0)
             t_h = [t_h_in - (t_h_in - t_h_out) * (i / 10.0) for i in range(11)]
             t_c = [t_c_in + (t_c_out - t_c_in) * (i / 10.0) for i in range(11)]
 
@@ -1185,5 +1202,222 @@ def export_profile_csv(profile_data_or_context) -> str:
         frac = round(i / max(1, n_points - 1), 3)
         writer.writerow([i + 1, frac, th_val, tc_val, dt_val])
 
+    return output.getvalue()
+
+
+def export_calculation_excel(context: dict) -> bytes:
+    """Hesaplama ve mühendislik sonuçlarını formüllü Excel (.xlsx) olarak dışa aktarır."""
+    from io import BytesIO
+
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "TEMA Hesap Föyü"
+
+    header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+    section_font = Font(name="Arial", size=11, bold=True, color="0F3A5D")
+    bold_font = Font(name="Arial", size=10, bold=True)
+    regular_font = Font(name="Arial", size=10)
+
+    header_fill = PatternFill(start_color="0F3A5D", end_color="0F3A5D", fill_type="solid")
+
+    ws.merge_cells("A1:F1")
+    ws["A1"] = "HEAT EXCHANGER CALCULATION & TEMA RATING SHEET"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True, color="0F3A5D")
+    ws["A1"].alignment = Alignment(horizontal="center")
+
+    ws["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    ws["A2"].font = Font(name="Arial", size=9, italic=True)
+
+    row = 4
+    ws.cell(row=row, column=1, value="1. İŞLETME VE AKIŞKAN KOŞULLARI").font = section_font
+    row += 1
+    headers = ["Taraf", "Akışkan", "Debi [kg/s]", "Giriş T [°C]", "Çıkış T [°C]", "Basınç [bar]"]
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=row, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    inputs = context.get("inputs") or {}
+    fluids = context.get("fluids") or {}
+    results = context.get("results") or {}
+    selected = (results.get("main") if isinstance(results, dict) else {}) or context.get("selected_result") or {}
+
+    row += 1
+    hot_row = row
+    ws.cell(row=row, column=1, value="Sıcak Taraf").font = bold_font
+    ws.cell(row=row, column=2, value=(fluids.get("hot") or {}).get("label", "-")).font = regular_font
+    ws.cell(row=row, column=3, value=float(inputs.get("m_hot_kg_s", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=4, value=float(inputs.get("T_hot_in_C", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=5, value=float(selected.get("T_hot_out [C]", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=6, value=float(inputs.get("P_hot_bar", 1.013) or 1.013)).font = regular_font
+
+    row += 1
+    cold_row = row
+    ws.cell(row=row, column=1, value="Soğuk Taraf").font = bold_font
+    ws.cell(row=row, column=2, value=(fluids.get("cold") or {}).get("label", "-")).font = regular_font
+    ws.cell(row=row, column=3, value=float(inputs.get("m_cold_kg_s", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=4, value=float(inputs.get("T_cold_in_C", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=5, value=float(selected.get("T_cold_out [C]", 0.0) or 0.0)).font = regular_font
+    ws.cell(row=row, column=6, value=float(inputs.get("P_cold_bar", 1.013) or 1.013)).font = regular_font
+
+    row += 2
+    ws.cell(row=row, column=1, value="2. TERMAL PERFORMANS VE DERECELENDİRME").font = section_font
+    row += 1
+    ws.cell(row=row, column=1, value="Parametre").font = header_font
+    ws.cell(row=row, column=1).fill = header_fill
+    ws.cell(row=row, column=2, value="Değer").font = header_font
+    ws.cell(row=row, column=2).fill = header_fill
+    ws.cell(row=row, column=3, value="Birim").font = header_font
+    ws.cell(row=row, column=3).fill = header_fill
+    ws.cell(row=row, column=4, value="Formül / Not").font = header_font
+    ws.cell(row=row, column=4).fill = header_fill
+
+    actual = context.get("actual_result") or {}
+    geo = context.get("geo_result") or {}
+
+    flow_type_str = str(
+        context.get("methods", {}).get("Akış tipi internal")
+        or context.get("methods", {}).get("Akış tipi")
+        or context.get("inputs", {}).get("flow_type")
+        or ""
+    ).lower()
+    if "parallel" in flow_type_str or "paralel" in flow_type_str:
+        lmtd_formula = f"=IFERROR(((D{hot_row}-D{cold_row})-(E{hot_row}-E{cold_row}))/LN(MAX(0.001,(D{hot_row}-D{cold_row}))/MAX(0.001,(E{hot_row}-E{cold_row}))), D{hot_row}-D{cold_row})"
+    elif "counter" in flow_type_str or "ters" in flow_type_str:
+        lmtd_formula = f"=IFERROR(((D{hot_row}-E{cold_row})-(E{hot_row}-D{cold_row}))/LN(MAX(0.001,(D{hot_row}-E{cold_row}))/MAX(0.001,(E{hot_row}-D{cold_row}))), D{hot_row}-E{cold_row})"
+    else:
+        lmtd_formula = "Sayısal / Çapraz Akış LMTD"
+
+    thermal_rows = [
+        ("Isı Yükü (Q)", selected.get("Q [W]", 0.0), "W", "Q = m * Cp * ΔT"),
+        ("Etkinlik (ε)", selected.get("epsilon", 0.0), "-", "ε = Q / Q_max"),
+        ("LMTD", selected.get("LMTD") or actual.get("LMTD", 0.0), "°C", lmtd_formula),
+        ("Düzeltme Faktörü (F)", selected.get("F") or actual.get("F", 1.0), "-", "Bowman / Crossflow F-Factor"),
+        ("Toplam Isı Transfer Katsayısı (U)", actual.get("U") or selected.get("U") or geo.get("U", 0.0), "W/m²·K", "1 / (1/h_i + R_f_i + R_wall + R_f_o + 1/h_o)"),
+        ("Gerekli Isı Transfer Alanı (A_req)", actual.get("A_required") or selected.get("A_required", 0.0), "m²", "Q / (U * F * LMTD)"),
+        ("Mevcut Isı Transfer Alanı (A_actual)", actual.get("A_total") or selected.get("A") or geo.get("A_total", 0.0), "m²", "N * π * Do * L"),
+        ("Termal Aşım Oranı (Margin)", None, "%", f"=(B{row+7}-B{row+6})/MAX(0.001,B{row+6})*100"),
+        ("İç Taşınım Katsayısı (h_i)", actual.get("h_i") or geo.get("h_i", 0.0), "W/m²·K", "Gnielinski / Dittus-Boelter"),
+        ("Dış Taşınım Katsayısı (h_o)", actual.get("h_o") or geo.get("h_o", 0.0), "W/m²·K", "Bell-Delaware / Kern / Briggs-Young"),
+        ("Boru Tarafı Basınç Kaybı (ΔP_tube)", actual.get("delta_p_tube_kPa") or (geo.get("delta_p_tube", 0.0)/1000.0), "kPa", "Darcy-Weisbach"),
+        ("Gövde Tarafı Basınç Kaybı (ΔP_shell)", actual.get("delta_p_shell_kPa") or (geo.get("delta_p_shell", 0.0)/1000.0), "kPa", "Bell-Delaware / Kern"),
+    ]
+
+    for label, val, unit, note in thermal_rows:
+        row += 1
+        ws.cell(row=row, column=1, value=label).font = regular_font
+        val_cell = ws.cell(row=row, column=2)
+        if isinstance(note, str) and note.startswith("="):
+            val_cell.value = note
+        else:
+            val_cell.value = float(val) if val is not None else 0.0
+        val_cell.font = bold_font
+        ws.cell(row=row, column=3, value=unit).font = regular_font
+        ws.cell(row=row, column=4, value=note if not note.startswith("=") else "Canlı Excel Formülü").font = regular_font
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+    orc_data = context.get("orc_data") or (context.get("inputs") if any(k in context.get("inputs", {}) for k in ("n_boilers", "pipe_di_mm", "pipe_dn_sel")) else None)
+    if orc_data:
+        ws_orc = wb.create_sheet(title="ORC & WHRU Tesis Verileri")
+        ws_orc.merge_cells("A1:F1")
+        ws_orc["A1"] = "WHRU KAZANLARI, BORU HİDROLİĞİ VE ORC GÜÇ DÖNGÜSÜ"
+        ws_orc["A1"].font = Font(name="Arial", size=14, bold=True, color="0F3A5D")
+        ws_orc["A1"].alignment = Alignment(horizontal="center")
+
+        ws_orc["A2"] = f"Rapor Tarihi: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        ws_orc["A2"].font = Font(name="Arial", size=9, italic=True)
+
+        r = 4
+        ws_orc.cell(row=r, column=1, value="1. ATIK ISI BACA KAZANLARI (WHRU)").font = section_font
+        r += 1
+        b_headers = ["Kazan", "Durum", "Baca Debisi [kg/s]", "Giriş T_fg [°C]", "Yağ Debisi [kg/s]", "Pay [%]"]
+        for c_idx, bh in enumerate(b_headers, start=1):
+            c_cell = ws_orc.cell(row=r, column=c_idx, value=bh)
+            c_cell.font = header_font
+            c_cell.fill = header_fill
+            c_cell.alignment = Alignment(horizontal="center")
+
+        n_b = int(orc_data.get("n_boilers", 1) or 1)
+        tot_m_oil = float(orc_data.get("m_oil", 32.0) or 32.0)
+        for idx in range(1, max(2, n_b + 1)):
+            r += 1
+            is_active = (idx <= n_b)
+            split_pct = (100.0 / n_b) if is_active else 0.0
+            m_oil_i = (tot_m_oil / n_b) if is_active else 0.0
+            m_flue_i = float(orc_data.get(f"m_flue_{idx}", orc_data.get("m_flue", 28.5)) or 28.5) if is_active else 0.0
+            t_flue_i = float(orc_data.get(f"t_flue_in_{idx}", orc_data.get("T_flue_in", 340.0)) or 340.0) if is_active else 0.0
+
+            ws_orc.cell(row=r, column=1, value=f"WHRU-{idx}").font = bold_font
+            ws_orc.cell(row=r, column=2, value="Aktif" if is_active else "Pasif").font = regular_font
+            ws_orc.cell(row=r, column=3, value=round(m_flue_i, 2)).font = regular_font
+            ws_orc.cell(row=r, column=4, value=round(t_flue_i, 1)).font = regular_font
+            ws_orc.cell(row=r, column=5, value=round(m_oil_i, 2)).font = regular_font
+            ws_orc.cell(row=r, column=6, value=f"%{split_pct:.1f}").font = regular_font
+
+        r += 2
+        ws_orc.cell(row=r, column=1, value="2. KIZGIN YAĞ BORU HATTI VE HİDROLİK (DARCY-WEISBACH)").font = section_font
+        r += 1
+        pipe_headers = ["Parametre", "Değer", "Birim", "Yöntem / Standart"]
+        for c_idx, ph in enumerate(pipe_headers, start=1):
+            p_cell = ws_orc.cell(row=r, column=c_idx, value=ph)
+            p_cell.font = header_font
+            p_cell.fill = header_fill
+            p_cell.alignment = Alignment(horizontal="center")
+
+        pipe_dn = str(orc_data.get("pipe_dn_sel", "DN150 (Di=154.0 mm)"))
+        pipe_di = float(orc_data.get("pipe_di_mm", 154.0) or 154.0)
+        pipe_l = float(orc_data.get("pipe_length_m", 80.0) or 80.0)
+        p_rows = [
+            ("Nominal Boru Çapı (DN)", pipe_dn, "-", "Kullanıcı / Standart Seçim"),
+            ("Boru İç Çapı (Di)", pipe_di, "mm", "Standart Çelik Boru Tablosu"),
+            ("Toplam Eşdeğer Boru Uzunluğu (L)", pipe_l, "m", "Kazan - Eşanjör Arası Hat"),
+            ("Sirkülasyon Yağ Debisi (m_oil)", tot_m_oil, "kg/s", "Kızgın Yağ Sirkülasyonu"),
+            ("Pürüzlülük Katsayısı (ε)", 0.045, "mm", "Ticari Karbon Çelik Boru (API/ASME)"),
+            ("Sürtünme Modeli", "Darcy-Weisbach & Swamee-Jain", "-", "Laminer-Türbülans Geçişli"),
+        ]
+        for p_label, p_val, p_unit, p_method in p_rows:
+            r += 1
+            ws_orc.cell(row=r, column=1, value=p_label).font = regular_font
+            ws_orc.cell(row=r, column=2, value=p_val).font = bold_font
+            ws_orc.cell(row=r, column=3, value=p_unit).font = regular_font
+            ws_orc.cell(row=r, column=4, value=p_method).font = regular_font
+
+        r += 2
+        ws_orc.cell(row=r, column=1, value="3. ORC GÜÇ DÖNGÜSÜ VE PARAZİTİK TÜKETİM").font = section_font
+        r += 1
+        for c_idx, ph in enumerate(pipe_headers, start=1):
+            p_cell = ws_orc.cell(row=r, column=c_idx, value=ph)
+            p_cell.font = header_font
+            p_cell.fill = header_fill
+            p_cell.alignment = Alignment(horizontal="center")
+
+        orc_rows = [
+            ("ORC Çevrim Akışkanı", str(orc_data.get("orc_fluid_sel", "Cyclopentane")), "-", "Organik Çalışma Akışkanı"),
+            ("Buharlaşma Basıncı (P_evap)", float(orc_data.get("P_evap_bar", 16.0) or 16.0), "bar", "Süperheater / Evaporatör Basıncı"),
+            ("Kondenser Tipi", "Hava Soğutmalı (ACC)" if str(orc_data.get("condenser_type", "")).lower() in ("air", "acc") else "Su Soğutmalı Gövde-Boru", "-", "Kondensasyon Kaynağı"),
+            ("Termal Yağ Akışkanı", str(orc_data.get("oil_fluid_sel", "Therminol 66")), "-", "Isı Taşıyıcı Kapalı Devre Yağı"),
+        ]
+        for o_label, o_val, o_unit, o_method in orc_rows:
+            r += 1
+            ws_orc.cell(row=r, column=1, value=o_label).font = regular_font
+            ws_orc.cell(row=r, column=2, value=o_val).font = bold_font
+            ws_orc.cell(row=r, column=3, value=o_unit).font = regular_font
+            ws_orc.cell(row=r, column=4, value=o_method).font = regular_font
+
+        for col in ws_orc.columns:
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws_orc.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+    output = BytesIO()
+    wb.save(output)
     return output.getvalue()
 

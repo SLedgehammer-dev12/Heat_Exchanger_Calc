@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "./.opencode/plugins"
+  ],
+  "agent": {
+    "ponytail": {
+      "description": "Lazy senior developer mode. Solves problems with the smallest complete change, stdlib first, YAGNI, and rigorous verification.",
+      "mode": "primary"
+    },
+    "ponytail-reviewer": {
+      "description": "Senior code reviewer that evaluates changes like a senior engineer paged when it breaks (correctness, security, load, tests, speed, lean).",
+      "mode": "subagent",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "ponytail-auditor": {
+      "description": "Senior repository auditor that inspects whole-codebase architecture, bugs, security, scaling bottlenecks, dead code, and bloat.",
+      "mode": "subagent",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "senior-mechanical-engineer": {
+      "description": "Senior mechanical engineer specializing in ASME Section VIII Div 1 pressure vessels, TEMA Class R/C/B standards, API 661 air-cooled heat exchangers, tubesheet design, and FIV vibration analysis.",
+      "mode": "subagent"
+    },
+    "senior-mechanicalengineer": {
+      "description": "Alias for senior-mechanical-engineer.",
+      "mode": "subagent"
+    },
+    "senior-thermodynamic-engineer": {
+      "description": "Senior thermodynamic engineer specializing in industrial heat exchanger sizing, Organic Rankine Cycle (ORC) power loops, multi-WHRU networks, real fluid EOS, and hydraulic loops.",
+      "mode": "subagent"
+    },
+    "senior-thermodinamik-engineer": {
+      "description": "Alias for senior-thermodynamic-engineer.",
+      "mode": "subagent"
+    },
+    "senior-tester": {
+      "description": "Senior QA & test engineer specializing in thermodynamic verification, property-based testing, numerical stability, and regression suites.",
+      "mode": "subagent"
+    }
+  }
+}

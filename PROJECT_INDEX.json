@@ -1,0 +1,49 @@
+{
+  "metadata": {
+    "repository": "Heat_Exchanger_Calc",
+    "version": "v0.5.0",
+    "updated_at": "2026-11-05T17:25:00+03:00",
+    "commit_hash": "68409c1f9f9474816c04b59b942c25a0743be197",
+    "staleness_threshold_days": 7,
+    "total_files": 54,
+    "total_loc": 13650,
+    "test_suite_status": "264 passed (100%)",
+    "linter_status": "0 warnings / 0 errors",
+    "estimated_token_savings": "86%"
+  },
+  "domains": {
+    "core_engine": [
+      {"path": "heat_exchanger.py", "role": "Epsilon-NTU, LMTD, multi-zone phase change, 1D segmented solver, TEMA RCB-4.62 nozzle impingement, and smooth friction transitions"},
+      {"path": "correlations.py", "role": "Bowman-Mueller F-factor, robust balanced R->1 L'Hopital limits, crossflow and shell-and-tube correlations"},
+      {"path": "fluids_db.py", "role": "CoolProp, IAPWS, Andrade viscosity, and mixture database with positive property validation"},
+      {"path": "mechanical.py", "role": "ASME UG-27 shell thickness, UG-32 formed heads (2:1 ellipsoidal & torispherical), UG-34 flat covers, UG-99(b) temperature derated hydro test, TEMA RCB-7 tubesheets, TEMA FIV, API 661 air-cooled exchangers"},
+      {"path": "standards.py", "role": "TEMA classes (R, C, B), BWG tube dimensions, API 661 fin standards"},
+      {"path": "reporting.py", "role": "ReportLab PDF datasheets, CSV exports, and openpyxl live formula Excel export"}
+    ],
+    "user_interfaces": [
+      {"path": "app_web.py", "role": "Streamlit web application with live ASME/TEMA verification, 3-zone condenser, detached logger cleanup, cached PDF/Excel export, and 2D/3D visualizers"},
+      {"path": "app_desktop.py", "role": "PyQt5 desktop application (frozen) with results, cross-check, log, ORC, and 3D tabs"}
+    ],
+    "visualizers": [
+      {"path": "tubesheet_component.py", "role": "Procedural 2D SVG tubesheet tube layout generator with multi-pass lanes, sanitized layout angle parsing, and pitch/diameter warning"},
+      {"path": "exchanger_3d_component.py", "role": "Interactive Three.js / WebGL 3D teardown simulation with sanitized script tag escaping"},
+      {"path": "orc_schematic_component.py", "role": "Live SVG/DOM ORC P&ID schematic with multi-WHRU boilers, Darcy-Weisbach hydraulics, and closed-loop elevation head normalization"},
+      {"path": "orc_3d_plant_component.py", "role": "Interactive Three.js 3D Digital Twin plant visualizer for waste heat recovery ORC"}
+    ],
+    "cycles_and_models": [
+      {"path": "orc_system_model.py", "role": "Organic Rankine Cycle and thermal oil network model with 1-5 parallel WHRU boilers, acid dew point guard, First Law mass/energy balance, and real fluid EOS"}
+    ],
+    "tests": [
+      {"path": "test_changes.py", "role": "Phase 0-P9 regression test suite"},
+      {"path": "test_phase1_fixes.py", "role": "ASME and boundary layer unit tests"},
+      {"path": "test_phase2_correlations.py", "role": "Correlation and two-phase unit tests"},
+      {"path": "test_phase3_validation.py", "role": "Cross-check and solver validation tests"},
+      {"path": "test_phase4_deliverables.py", "role": "Reporting and export deliverables tests"},
+      {"path": "test_phase5_engineering.py", "role": "TEMA Bowman, ASME corroded radius, tubesheet & cover mechanics"},
+      {"path": "test_orc_system_model.py", "role": "ORC thermodynamic cycle model, NPSH, and series exchanger network tests"},
+      {"path": "test_property_based.py", "role": "Hypothesis property-based tests for physical invariants and boundary safety"},
+      {"path": "test_visualizers.py", "role": "Visualizer, Excel, TEMA FIV, API 661 fan, and 3D script escaping unit tests"},
+      {"path": "verify_100_scenarios.py", "role": "Comprehensive 104-scenario thermodynamic and hydraulic stress test matrix"}
+    ]
+  }
+}

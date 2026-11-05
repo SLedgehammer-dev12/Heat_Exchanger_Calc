@@ -19,7 +19,7 @@ repos:
           - scipy
           - matplotlib
           - pandas
-          - pint
+          - openpyxl
           - thermo>=0.6
           - iapws>=1.5
           - reportlab

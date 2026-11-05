@@ -8,7 +8,7 @@ binaries = []
 hiddenimports = [
     'scipy._cyutility', 'scipy._external.array_api_compat.numpy.fft',
     'numpy._core._exceptions', 'app_shared', 'engineering_utils', 'reportlab',
-    'config', 'units', 'model_types', 'i18n', 'pint', 'iapws',
+    'config', 'units', 'model_types', 'i18n', 'openpyxl', 'iapws',
     'exceptions', 'helpers', 'correlations', 'plot_theme', 'standards', 'mechanical',
     'fluids_db', 'heat_exchanger', 'logging_config', 'reporting', 'updater', 'version',
 ]
@@ -16,7 +16,6 @@ datas += collect_data_files('chemicals')
 datas += collect_data_files('thermo')
 datas += collect_data_files('fluids')
 datas += collect_data_files('ht')
-datas += collect_data_files('pint')
 datas += collect_data_files('iapws')
 for pkg in ['reportlab', 'numpy', 'scipy', 'certifi']:
     tmp_ret = collect_all(pkg)
