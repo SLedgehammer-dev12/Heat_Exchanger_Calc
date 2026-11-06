@@ -1,3 +1,18 @@
+# Heat Exchanger Calc v0.4.3
+
+Thermodynamic First Law balance closure, elimination of silent input clamping, 3D theme & ground contrast upgrade, and ASME/TEMA engineering provenance audit release.
+
+## Core Thermodynamics & Standards Provenance (v0.4.3)
+
+- **Condenser 1st Law Energy Balance Closure** — Enforced complete cycle energy conservation $Q_{cond} = Q_{orc} + W_{pump,fluid} - W_{turb,mech}$. Added feed pump hydraulic enthalpy addition ($W_{pump,fluid} \approx W_{pump,elec} \times \eta_{mech}$) to condenser heat rejection and eliminated generator electrical loss leakage into the thermal sink.
+- **Dynamic Vapor $C_p$ & Enthalpy-Based UA Allocation** — Replaced fixed 1680 J/(kg·K) Cyclopentane vapor specific heat with live CoolProp saturated vapor evaluation (~2147 J/(kg·K) at 14 bar). Replaced arbitrary 65/35 evaporator/preheater UA split with demand enthalpy ratio ($Q_{evap} / (Q_{pre} + Q_{evap})$).
+- **Elimination of Silent Input Clamping** — Out-of-boundary inputs are no longer quietly coerced to valid limits; bounded values are explicitly tracked in `clamped_inputs`. Sub-zero and infinite inputs raise `InvalidInputError`. Prevented phantom heat generation when $UA \to 0$ and enabled negative net power reporting with `net_power_blocked` diagnostics.
+- **Temperature Cross Explicit Diagnostics** — Integrated `TemperatureCrossError` with rating feasibility detection (`status="infeasible"`, `temperature_cross=True`).
+- **3D Digital Twin Ground Contrast & Dark/Light Theme** — Enhanced WebGL ground contrast (`0xb4c0cf` base with darker grid lines) to clearly separate equipment bodies from the foundation. Added toggleable Studio Daylight / Midnight Dark themes (`THEMES_3D`) with dynamic toolbar action (`🌙 Koyu Tema / ☀️ Açık Tema`).
+- **ASME BPVC & TEMA Engineering Traceability** — Added structured `provenance` metadata to heat exchanger geometric sizing reports tracking design standards (TEMA 10th Ed, ASME Sec VIII Div 1) and flow regime validity. Tubesheet SVG now explicitly cites ASME Section VIII Div 1 Part UHX / TEMA RCB-7 requirements.
+
+---
+
 # Heat Exchanger Calc v0.4.2
 
 Web ORC & WHRU Digital Twin synchronization, 3D studio lighting, and live thermodynamic solver resilience update.
