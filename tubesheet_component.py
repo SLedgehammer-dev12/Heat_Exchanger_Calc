@@ -2,6 +2,10 @@
 
 Renders TEMA tube layout patterns (30° triangular, 45° rotated square,
 60° rotated triangular, 90° square pitch) with multi-pass partition lanes.
+
+NOTE: This generator provides geometric tube bundle layout visualization.
+Mechanical tubesheet thickness sizing must be conducted using ASME Sec VIII Div 1
+Part UHX or TEMA Section 5 RCB-7 standards via dedicated mechanical modules.
 """
 
 from __future__ import annotations
@@ -177,12 +181,18 @@ def generate_tubesheet_svg(
         )
 
     # Legend / Info text at bottom
-    info_y = view_box_r - 8.0
+    info_y = view_box_r - 13.0
+    sub_info_y = view_box_r - 2.5
     p_ratio = pitch_mm / max(1e-3, D_o_mm)
     ratio_warn = " ⚠️ P/Do<1.25" if p_ratio < 1.249 else ""
     svg_parts.append(
-        f'<text x="0" y="{info_y:.1f}" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11.5" font-weight="600" fill="#1e293b">'
+        f'<text x="0" y="{info_y:.1f}" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="600" fill="#1e293b">'
         f"TEMA {angle_val}° Açılı Ayna — {n_drawn}/{target_count} Boru | P={pitch_mm:.1f} mm (P/Do={p_ratio:.2f}{ratio_warn}) | {int(tube_passes)} Geçiş"
+        "</text>"
+    )
+    svg_parts.append(
+        f'<text x="0" y="{sub_info_y:.1f}" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="8" fill="#64748b">'
+        "Geometrik boru yerleşimidir. Mekanik mukavemet &amp; ayna kalınlığı ASME Part UHX / TEMA RCB-7 ile doğrulanmalıdır."
         "</text>"
     )
     svg_parts.append("</svg>")

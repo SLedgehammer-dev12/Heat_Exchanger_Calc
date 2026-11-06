@@ -44,6 +44,7 @@ def get_orc_3d_plant_container_html() -> str:
           <button type="button" class="btn-3d-cam" onclick="window.set3DCameraPreset && window.set3DCameraPreset('turbine')" title="ORC Türbin & Jeneratör">⚡ Türbin Odak</button>
           <button type="button" class="btn-3d-cam" onclick="window.set3DCameraPreset && window.set3DCameraPreset('condenser')" title="Kondenser & Soğutma Kulesi Odak">❄️ Kondenser Odak</button>
           <button type="button" class="btn-3d-cam" onclick="window.reset3DCamera && window.reset3DCamera()" title="Kamerayı Varsayılana Sıfırla">🔄 Sıfırla</button>
+          <button type="button" id="btn_3d_theme" class="btn-3d-cam" onclick="window.toggle3DTheme && window.toggle3DTheme()" title="Koyu / Açık 3D Tema">🌙 Koyu Tema</button>
           <span style="color:#475569; margin:0 2px;">|</span>
           <button type="button" class="btn-3d-cam" onclick="window.change3DBoilerCount && window.change3DBoilerCount(-1)" title="Atık Isı Baca Kazanı Eksilt">➖</button>
           <span id="lbl_3d_whru_count" style="display:inline-flex; align-items:center; font-size:11.5px; font-weight:700; color:#f8fafc; padding:0 4px;">🏭 WHRU: 2 Kazan</span>
@@ -86,6 +87,9 @@ def get_orc_3d_plant_js() -> str:
    * ========================================================================= */
   let scene3D, camera3D, renderer3D, controls3D;
   let is3DInitialized = false;
+  let themeLights = {};
+  let themeSlabMat = null;
+  let themeGrid = null;
   let plant3DGroup = null;
   let boilers3D = [];
   let plinths3D = [];
@@ -163,6 +167,7 @@ def get_orc_3d_plant_js() -> str:
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 0.95);
     hemiLight.position.set(0, 120, 0);
     scene3D.add(hemiLight);
+    themeLights = { ambientLight, hemiLight };
 
     const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.45);
     sunLight.position.set(55, 85, 50);
@@ -184,6 +189,7 @@ def get_orc_3d_plant_js() -> str:
     const frontFillLight = new THREE.DirectionalLight(0xffffff, 0.65);
     frontFillLight.position.set(0, 45, 90);
     scene3D.add(frontFillLight);
+    Object.assign(themeLights, { sunLight, blueFillLight, frontFillLight });
 
     // 5. Build Plant Hierarchy
     boilers3D = [];
@@ -231,6 +237,7 @@ def get_orc_3d_plant_js() -> str:
     }
 
     is3DInitialized = true;
+    if (window.current3DTheme === "dark") window.set3DTheme("dark");
     start3DAnimation();
   }
 
@@ -241,19 +248,21 @@ def get_orc_3d_plant_js() -> str:
     // Ana Endüstriyel Zemin Plakası (Bright Light-Gray Industrial Concrete Slab)
     const slabGeo = new THREE.BoxGeometry(165, 1.2, 115);
     const slabMat = new THREE.MeshStandardMaterial({
-      color: 0xcbd5e1,
-      roughness: 0.80,
-      metalness: 0.08,
+      color: 0xb4c0cf,
+      roughness: 0.85,
+      metalness: 0.05,
     });
+    themeSlabMat = slabMat;
     const mainSlab = new THREE.Mesh(slabGeo, slabMat);
     mainSlab.position.y = -0.6;
     mainSlab.receiveShadow = true;
     plant3DGroup.add(mainSlab);
 
     // Zemin Genleşme Derzleri / Grid
-    const grid = new THREE.GridHelper(155, 31, 0x64748b, 0x94a3b8);
+    const grid = new THREE.GridHelper(155, 31, 0x475569, 0x7f8da0);
     grid.position.y = 0.02;
     plant3DGroup.add(grid);
+    themeGrid = grid;
 
     // Güvenlik Yürüme Yolları (Yellow Safety Walkway Stripes)
     const walkwayGeo = new THREE.PlaneGeometry(145, 2.8);
@@ -2014,6 +2023,39 @@ def get_orc_3d_plant_js() -> str:
 
   window.reset3DCamera = function() {
     window.set3DCameraPreset("iso");
+  };
+
+  // Light / dark scene theme (equipment colours stay; ground, sky and light rig change for contrast)
+  const THEMES_3D = {
+    light: { sky: 0xe8f0fe, slab: 0xb4c0cf, grid: [0x475569, 0x7f8da0], amb: 1.15, hemi: 0.95, sun: 1.45, fill: [0.85, 0.65],
+             css: "linear-gradient(180deg, #dbeafe 0%, #eff6ff 55%, #e2e8f0 100%)", label: "🌙 Koyu Tema" },
+    dark:  { sky: 0x0b1220, slab: 0x1e293b, grid: [0x64748b, 0x334155], amb: 0.55, hemi: 0.45, sun: 1.25, fill: [0.45, 0.35],
+             css: "linear-gradient(180deg, #020617 0%, #0b1220 55%, #111827 100%)", label: "☀️ Açık Tema" },
+  };
+  window.set3DTheme = function(mode) {
+    const t = THEMES_3D[mode] || THEMES_3D.light;
+    window.current3DTheme = THEMES_3D[mode] ? mode : "light";
+    const box = document.getElementById("container_3d");
+    if (box) box.style.background = t.css;
+    const btn = document.getElementById("btn_3d_theme");
+    if (btn) btn.textContent = t.label;
+    if (!scene3D) return;
+    scene3D.background = new THREE.Color(t.sky);
+    if (scene3D.fog) scene3D.fog.color.setHex(t.sky);
+    if (themeSlabMat) themeSlabMat.color.setHex(t.slab);
+    if (themeGrid && themeGrid.material) {
+      const m = Array.isArray(themeGrid.material) ? themeGrid.material : [themeGrid.material];
+      m.forEach((mat, i) => mat.color.setHex(t.grid[Math.min(i, 1)]));
+    }
+    const L = themeLights;
+    if (L.ambientLight) L.ambientLight.intensity = t.amb;
+    if (L.hemiLight) L.hemiLight.intensity = t.hemi;
+    if (L.sunLight) L.sunLight.intensity = t.sun;
+    if (L.blueFillLight) L.blueFillLight.intensity = t.fill[0];
+    if (L.frontFillLight) L.frontFillLight.intensity = t.fill[1];
+  };
+  window.toggle3DTheme = function() {
+    window.set3DTheme(window.current3DTheme === "dark" ? "light" : "dark");
   };
 
   function on3DWindowResize() {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from exceptions import TemperatureCrossError
 from helpers import _append_unique
 
 
@@ -15,6 +16,7 @@ def _bowman_lmtd_factor(
     N_shell_passes: int = 1,
     hot_is_tube: bool = False,
     warnings: list[str] | None = None,
+    strict: bool = False,
 ) -> float:
     """Bowman-Mueller LMTD correction factor for N-2N TEMA shell-and-tube exchangers.
 
@@ -28,7 +30,18 @@ def _bowman_lmtd_factor(
     When hot_is_tube=True, P = (T_hot_in - T_hot_out) / delta_T_max and R = C_h / C_c.
 
     F = 0.75 is recommended by TEMA; F < 0.5 raises a strong warning.
+
+    A temperature cross returns the 0.01 floor (needed as a penalty inside root-finders);
+    with strict=True it raises TemperatureCrossError instead.
     """
+
+    def _cross() -> float:
+        if strict:
+            raise TemperatureCrossError(
+                "Sıcaklık çakışması (Temperature cross): bu ısıl görev fiziksel olarak imkansızdır."
+            )
+        return 0.01
+
     delta_T_max = T_hot_in - T_cold_in
     if delta_T_max <= 0 or C_h <= 0 or C_c <= 0:
         return 1.0
@@ -47,7 +60,7 @@ def _bowman_lmtd_factor(
                 f"Sıcaklık çakışması (Temperature cross): Isıl etkinlik P = {P:.3f} >= 1.0 "
                 "olup termodinamik açıdan imkansızdır. Mevcut debi ve sıcaklıklarla bu transfer gerçekleştirilemez.",
             )
-        return 0.01
+        return _cross()
 
     if P <= 0 or R <= 0:
         return 1.0
@@ -71,7 +84,7 @@ def _bowman_lmtd_factor(
                 f"Sıcaklık çakışması (Temperature cross): Tek gövde etkinliği S = {S:.3f} >= 1.0. "
                 "Seri gövde sayısını artırın veya akış düzenini değiştirin.",
             )
-        return 0.01 if S >= 1.0 else 1.0
+        return _cross() if S >= 1.0 else 1.0
 
     if abs(R - 1.0) < 1e-4:
         denom_val = 2.0 - S * (2.0 + sqrt_R2p1)
@@ -83,7 +96,7 @@ def _bowman_lmtd_factor(
                     "Sıcaklık çakışması (Temperature cross): Mevcut gövde geçiş sayısı "
                     "ile bu ısıl görev fiziksel olarak imkansızdır (S >= S_max). Seri gövde sayısını artırın.",
                 )
-            return 0.01
+            return _cross()
         denom = np.log(num_val / denom_val)
         if abs(denom) < 1e-15:
             return 1.0
@@ -98,7 +111,7 @@ def _bowman_lmtd_factor(
                     "Sıcaklık çakışması (Temperature cross): Mevcut gövde geçiş sayısı "
                     "ile bu ısıl görev fiziksel olarak imkansızdır (S >= S_max). Seri gövde sayısını artırın.",
                 )
-            return 0.01
+            return _cross()
         numerator = sqrt_R2p1 * np.log(max(1e-12, (1.0 - S) / (1.0 - R * S)))
         denominator = (R - 1.0) * np.log(max(1e-12, num_val / denom_val))
         if denominator == 0:

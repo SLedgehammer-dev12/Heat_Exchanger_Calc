@@ -9,6 +9,10 @@ class InvalidInputError(HeatExchangerError, ValueError):
     """Non-physical or invalid input parameters."""
 
 
+class TemperatureCrossError(InvalidInputError):
+    """Second-law violation: required duty is impossible for the given terminal temperatures / shell passes."""
+
+
 class InvalidFlowTypeError(InvalidInputError):
     """Unsupported or disallowed flow type for the selected exchanger."""
 

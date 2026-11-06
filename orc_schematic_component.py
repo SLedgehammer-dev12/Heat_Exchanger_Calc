@@ -2300,7 +2300,7 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       // Turbine isentropic expansion & electrical generation power
       const turb_eta_is = state.turb_eta_is !== undefined ? state.turb_eta_is : 0.85;
       const turb_eta_gen = state.turb_eta_gen !== undefined ? state.turb_eta_gen : 0.96;
-      const w_turb_mech_kw = (m_cp_actual * dh_is * turb_eta_is) / 1000.0;
+      let w_turb_mech_kw = (m_cp_actual * dh_is * turb_eta_is) / 1000.0;
       let w_turb_kw = w_turb_mech_kw * turb_eta_gen;
 
       // Second Law Enforced: Carnot ceiling (eta_carnot * Q_orc)
@@ -2309,12 +2309,14 @@ def get_orc_schematic_html(initial_data: dict | None = None) -> str:
       const eta_carnot = Math.max(0.0, 1.0 - (t_c_sat_k / t_h_sup_k));
       const w_turb_carnot_max = (q_orc_total / 1000.0) * Math.min(0.28, eta_carnot * 0.85);
       w_turb_kw = Math.min(w_turb_kw, w_turb_carnot_max);
+      if (turb_eta_gen > 0) w_turb_mech_kw = Math.min(w_turb_mech_kw, w_turb_kw / turb_eta_gen);
 
       // Feed pump power (pumping actual cycle fluid flow)
       const w_cp_pump_kw = (m_cp_actual * Math.max(0.0, state.P_evap_bar - p_cond_actual) * 1e5) / (orcFluid.rho_liq * (state.feed_pump_eff || 0.70)) / 1000.0;
 
       // Condenser & Parasitic Power (ACC Fan vs Water Pump)
-      const q_cond = Math.max(0.0, q_orc_total - w_turb_kw * 1000.0);
+      // 1st law on cycle fluid: Q_in + W_pump(fluid) = Q_cond + W_shaft (generator loss is NOT condenser heat)
+      const q_cond = Math.max(0.0, q_orc_total + w_cp_pump_kw * (state.feed_pump_eff || 0.70) * 1000.0 - w_turb_mech_kw * 1000.0);
       let w_cond_parasitic_kw = 0.0;
       const isAirCond = (state.condenser_type === 'air');
       const svgCondAcc = document.getElementById('svg_cond_acc');

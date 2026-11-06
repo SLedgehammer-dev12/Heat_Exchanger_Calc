@@ -138,8 +138,11 @@ class TestOrcSystemModel(unittest.TestCase):
         self.assertGreater(cond["subcooling_K"], 5.0)
         self.assertGreater(cond["m_cw_kg_s"], 10.0)
 
-        # First Law Thermal Balance: Q_orc - W_turb_mech == Q_cond
-        self.assertAlmostEqual(res["orc"]["Q_total_kW"] - res["orc"]["W_turb_mech_kW"], cond["Q_kW"], delta=0.5)
+        # First Law Thermal Balance on Cycle Fluid: Q_orc + W_pump_fluid == Q_cond + W_turb_mech
+        w_pump_fluid_kw = res["orc"]["W_feed_pump_kW"] * 0.70
+        self.assertAlmostEqual(
+            res["orc"]["Q_total_kW"] + w_pump_fluid_kw - res["orc"]["W_turb_mech_kW"], cond["Q_kW"], delta=0.5
+        )
 
         # Verify Pump NPSH
         self.assertIn("feed_pump", res)
@@ -380,6 +383,28 @@ class TestOrcSystemModel(unittest.TestCase):
         self.assertIn("badge_line_sh_in", html)
         self.assertIn("setShInletMode", html)
         self.assertIn("pipe-flow", html)
+
+    def test_clamped_inputs_are_reported_not_silent(self):
+        from exceptions import InvalidInputError
+        from orc_system_model import solve_orc_system
+
+        res = solve_orc_system({"T_flue_in": 70.0, "P_evap_bar": 40.0})
+        by_name = {c["param"]: c for c in res["clamped_inputs"]}
+        self.assertEqual(by_name["T_flue_in"]["requested"], 70.0)
+        self.assertEqual(by_name["T_flue_in"]["used"], 100.0)
+        self.assertEqual(by_name["P_evap_bar"]["used"], 35.0)
+        self.assertEqual(solve_orc_system()["clamped_inputs"], [])
+        with self.assertRaises(InvalidInputError):
+            solve_orc_system({"m_flue": float("nan")})
+
+    def test_zero_ua_gives_no_phantom_heat_and_net_power_not_hidden(self):
+        from orc_system_model import solve_orc_system
+
+        res = solve_orc_system({"UA_sh_kW_K": 1.0})
+        self.assertLess(res["superheater"]["Q_kW"], 0.05 * 1000.0 * 15.0)  # below the old 5% floor effect
+        self.assertIn("net_power_blocked", res)
+        self.assertEqual(res["net_power_blocked"], res["orc"]["W_net_kW"] <= 0.0)
+        self.assertIn("thermo_fallback", res)
 
 
 if __name__ == "__main__":

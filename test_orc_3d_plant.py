@@ -316,6 +316,17 @@ class TestOrc3DPlantComponent(unittest.TestCase):
         for mv in metalness_vals:
             self.assertLessEqual(mv, 0.45, f"Material metalness {mv} is too high without envMap and darkens 3D scene")
 
+    def test_3d_light_dark_theme_and_ground_contrast(self):
+        js = orc_3d_plant_component.get_orc_3d_plant_js()
+        html = orc_3d_plant_component.get_orc_3d_plant_container_html()
+        self.assertIn("window.set3DTheme = function(mode)", js)
+        self.assertIn("window.toggle3DTheme", js)
+        self.assertIn('id="btn_3d_theme"', html)
+        # dark sky + darker slab than the old 0xcbd5e1 so bright equipment stands out in both themes
+        self.assertIn("sky: 0x0b1220", js)
+        self.assertIn("color: 0xb4c0cf", js)
+        self.assertNotIn("color: 0xcbd5e1,\n      roughness: 0.80", js)
+
 
 if __name__ == "__main__":
     unittest.main()

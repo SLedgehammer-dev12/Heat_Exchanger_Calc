@@ -32,6 +32,7 @@ from exceptions import (
     InvalidGeometryError,
     InvalidInputError,
     MissingDependencyError,
+    TemperatureCrossError,
 )
 from helpers import _append_unique, _append_warning, _is_finite, _require_positive
 
@@ -503,6 +504,7 @@ class FinTubeHeatExchanger:
         C_h: float,
         C_c: float,
         warnings: list[str] | None = None,
+        strict: bool = False,
     ) -> float:
         E = EXCHANGER_F_METHOD.get(self.exchanger_type, "bowman")
         if E == "unity":
@@ -521,6 +523,7 @@ class FinTubeHeatExchanger:
                 N_shell_passes=getattr(self, "shell_passes", 1),
                 hot_is_tube=getattr(self, "hot_is_tube", False),
                 warnings=warnings,
+                strict=strict,
             )
         elif E == "crossflow":
             return self._calc_crossflow_F(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c, warnings)
@@ -1408,6 +1411,7 @@ class FinTubeHeatExchanger:
             )
 
         # LMTD ile Gerçek U Gereksinimi
+        infeasible = False
         dt1, dt2 = self._terminal_temperature_differences(T_hot_in, T_cold_in, T_hot_out, T_cold_out)
 
         try:
@@ -1415,9 +1419,12 @@ class FinTubeHeatExchanger:
                 raise InvalidInputError("Invalid terminal temperature difference")
             LMTD = dt1 if abs(dt1 - dt2) < 1e-06 else (dt1 - dt2) / np.log(dt1 / dt2)
 
-            F = self._calc_lmtd_F(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c, warnings=warnings)
+            F = self._calc_lmtd_F(T_hot_in, T_cold_in, T_hot_out, T_cold_out, C_h, C_c, warnings=warnings, strict=True)
 
             U_required = Q_avg / (self.A * LMTD * F) if (self.A * LMTD * F) > 0 else 0
+        except TemperatureCrossError as exc:
+            LMTD, U_required, F, infeasible = 0, 0, 0.0, True
+            warnings.append(str(exc))
         except Exception as exc:
             LMTD = 0
             U_required = 0
@@ -1433,7 +1440,8 @@ class FinTubeHeatExchanger:
             "U_required": U_required,
             "LMTD": LMTD,
             "F": F,
-            "status": "warning" if warnings else "ok",
+            "status": "infeasible" if infeasible else ("warning" if warnings else "ok"),
+            "temperature_cross": infeasible,
             "warnings": warnings,
         }
 
@@ -2150,6 +2158,28 @@ class FinTubeHeatExchanger:
             geom.setdefault("v_air_m3_s", vol_flow_shell)
             geom.setdefault("dp_static_pa", delta_p_shell)
 
+        provenance = {
+            "standards": [
+                "ASME BPVC Section VIII Div 1",
+                "TEMA Standards 10th Edition" if self.exchanger_type == EXCHANGER_TYPE_SHELL else "API 661 / ISO 13706",
+            ],
+            "correlations": {
+                "tube_htc": "Gnielinski (Re >= 2300) / Hausen (Laminar)",
+                "shell_htc": "Bell-Delaware analytical"
+                if self.exchanger_type == EXCHANGER_TYPE_SHELL
+                else "Briggs-Young / ESDU",
+                "pressure_drop": "Darcy-Weisbach (Moody f)"
+                if self.exchanger_type == EXCHANGER_TYPE_SHELL
+                else "Robinson-Briggs",
+            },
+            "validity": {
+                "Re_tube": round(Re_i, 1),
+                "Re_shell": round(Re_o, 1),
+                "is_turbulent_tube": bool(Re_i >= 4000),
+                "is_turbulent_shell": bool(Re_o >= 1000),
+            },
+        }
+
         return {
             "U": self.U,
             "A_total": self.A,
@@ -2180,6 +2210,7 @@ class FinTubeHeatExchanger:
             "api_face_velocity": v_face,
             "bundle_width": bundle_width,
             "bundle_length": bundle_length,
+            "provenance": provenance,
             "status": "warning" if warnings else "ok",
             "warnings": warnings,
         }

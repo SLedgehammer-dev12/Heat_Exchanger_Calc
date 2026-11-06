@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from exceptions import InvalidInputError
+
 
 def therminol66_cp(temp_c: float) -> float:
     """Specific heat of Therminol 66 [J/kg.K] as function of T [°C]."""
@@ -148,6 +150,11 @@ def cyclopentane_properties(
         # expanding into superheated vapor region without droplets)
         h_turb_is = float(CP.PropsSI("H", "P", p_cond_pa, "S", s_sup, "Cyclopentane"))
         dh_is = max(10000.0, h_sup - h_turb_is)
+        cp_v = (
+            max(1400.0, (h_sup - h_v) / (t_sup - t_sat))
+            if t_sup > t_sat + 0.5
+            else float(CP.PropsSI("C", "P", p_evap_pa, "Q", 1, "Cyclopentane"))
+        )
 
         return {
             "T_sat_C": t_sat,
@@ -158,6 +165,7 @@ def cyclopentane_properties(
             "h_sup": h_sup,
             "dh_is": dh_is,
             "rho_l_cond": rho_l_cond,
+            "cp_v": cp_v,
             "engine": "CoolProp Helmholtz EOS",
         }
     except Exception:
@@ -183,6 +191,7 @@ def cyclopentane_properties(
             "h_sup": h_sup,
             "dh_is": dh_is,
             "rho_l_cond": 705.0,
+            "cp_v": cp_v,
             "engine": "NIST Antoine / Watson Fallback",
         }
 
@@ -228,16 +237,28 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
     if params:
         p.update(params)
 
-    m_flue = max(0.1, float(p["m_flue"]))
-    t_flue_in = max(100.0, float(p["T_flue_in"]))
-    m_oil = max(0.5, float(p["m_oil"]))
-    bypass = max(0.0, min(1.0, float(p["bypass_ratio"])))
-    p_evap = max(1.0, min(35.0, float(p["P_evap_bar"])))
-    m_cp = max(0.1, float(p.get("m_cp_kg_s", p.get("m_cp", 11.5))))
-    t_cp_in = max(10.0, min(90.0, float(p["T_cp_in"])))
-    ua_sh = max(1.0, float(p["UA_sh_kW_K"])) * 1000.0
-    eta_pump = max(0.2, min(0.95, float(p["pump_efficiency"])))
-    eta_turb = max(0.4, min(0.95, float(p["turbine_efficiency"])))
+    clamped_inputs: list[dict[str, Any]] = []
+
+    def _in(name: str, value: Any, lo: float, hi: float = float("inf")) -> float:
+        """Read a user input; clamp to the model's validity range but REPORT it (no silent change)."""
+        v = float(value)
+        if not math.isfinite(v):
+            raise InvalidInputError(f"{name} sonlu bir sayı olmalıdır (girilen: {value}).")
+        used = max(lo, min(hi, v))
+        if used != v:
+            clamped_inputs.append({"param": name, "requested": v, "used": used, "valid_range": [lo, hi]})
+        return used
+
+    m_flue = _in("m_flue", p["m_flue"], 0.1)
+    t_flue_in = _in("T_flue_in", p["T_flue_in"], 100.0)
+    m_oil = _in("m_oil", p["m_oil"], 0.5)
+    bypass = _in("bypass_ratio", p["bypass_ratio"], 0.0, 1.0)
+    p_evap = _in("P_evap_bar", p["P_evap_bar"], 1.0, 35.0)
+    m_cp = _in("m_cp", p.get("m_cp_kg_s", p.get("m_cp", 11.5)), 0.1)
+    t_cp_in = _in("T_cp_in", p["T_cp_in"], 10.0, 90.0)
+    ua_sh = _in("UA_sh_kW_K", p["UA_sh_kW_K"], 1.0) * 1000.0
+    eta_pump = _in("pump_efficiency", p["pump_efficiency"], 0.2, 0.95)
+    eta_turb = _in("turbine_efficiency", p["turbine_efficiency"], 0.4, 0.95)
 
     # Scalable WHRU Boiler Train (1 to 5 boilers)
     if "n_boilers" in p:
@@ -278,12 +299,17 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
     h_fg = cp_props["h_fg"]
     h_l = cp_props["h_l"]
     h_in = cp_props["h_in"]
-    cp_cp_vap = 1680.0  # J/kg.K average vapor heat capacity
+    cp_cp_vap = float(cp_props.get("cp_v", 1680.0))
     cp_cp_liq = max(1800.0, (h_l - h_in) / max(1.0, t_sat - t_cp_in))
 
     # Conductance split for Evaporator (latent pool boiling) & Preheater (sensible liquid)
-    ua_evap = float(p.get("UA_evap_kW_K", p["UA_ph_kW_K"] * 0.65)) * 1000.0
-    ua_pre = float(p.get("UA_pre_kW_K", p["UA_ph_kW_K"] * 0.35)) * 1000.0
+    # Default is derived from dynamic thermodynamic enthalpy split instead of fixed 65/35
+    q_pre_dem_init = max(1.0, m_cp * max(0.0, h_l - h_in))
+    q_evap_dem_init = max(1.0, m_cp * h_fg)
+    f_evap_calc = q_evap_dem_init / (q_pre_dem_init + q_evap_dem_init)
+    ua_ph_total_kw = float(p["UA_ph_kW_K"])
+    ua_evap = float(p.get("UA_evap_kW_K", ua_ph_total_kw * f_evap_calc)) * 1000.0
+    ua_pre = float(p.get("UA_pre_kW_K", ua_ph_total_kw * (1.0 - f_evap_calc))) * 1000.0
 
     # Active oil flow through Superheater, Evaporator and Preheater in series
     m_oil_active = m_oil * (1.0 - bypass)
@@ -387,7 +413,7 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
                 if cr_sh < 1.0
                 else ntu_sh / (1.0 + ntu_sh)
             )
-            eps_sh = max(0.05, min(0.88, eps_sh))
+            eps_sh = max(0.0, min(0.88, eps_sh))
 
             q_sh_max = c_min_sh * max(0.0, t_oil_sh_in - t_sat)
             q_sh = max(0.0, eps_sh * q_sh_max)
@@ -397,7 +423,7 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
             # 4. Evaporator (Series stage 2a - Pool Boiling)
             q_evap_dem = m_cp * h_fg
             ntu_evap = ua_evap / c_oil_active
-            eps_evap = max(0.05, min(0.95, 1.0 - math.exp(-ntu_evap)))
+            eps_evap = max(0.0, min(0.95, 1.0 - math.exp(-ntu_evap)))
             q_evap_max = c_oil_active * max(0.0, t_oil_sh_out - t_sat)
             q_evap = min(q_evap_dem, eps_evap * q_evap_max)
             t_oil_evap_out = t_oil_sh_out - q_evap / c_oil_active
@@ -418,7 +444,7 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
                 if cr_pre < 1.0
                 else ntu_pre / (1.0 + ntu_pre)
             )
-            eps_pre = max(0.05, min(0.92, eps_pre))
+            eps_pre = max(0.0, min(0.92, eps_pre))
 
             q_pre_max = c_min_pre * max(0.0, t_oil_evap_out - t_cp_in)
             q_pre = min(q_pre_dem, eps_pre * q_pre_max)
@@ -514,6 +540,9 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
     eta_carnot = max(0.0, 1.0 - (t_c_sat_k / t_h_sup_k)) if t_h_sup_k > 0 else 0.0
     w_turb_carnot_max = (q_orc_total / 1000.0) * min(0.28, eta_carnot * 0.85)
     w_turb_kw = min(w_turb_kw, w_turb_carnot_max)
+    # Keep the shaft work consistent with the (possibly Carnot-capped) electrical output for the 1st-law balance.
+    if turb_eta_gen > 0:
+        w_turb_mech_kw = min(w_turb_mech_kw, w_turb_kw / turb_eta_gen)
 
     # Cyclopentane liquid feed pump consumption
     dp_cp_pa = max(0.0, (p_evap - p_cond_bar) * 1e5)
@@ -523,7 +552,8 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
     condenser_type = str(p.get("condenser_type", "water")).lower().strip()
     is_acc = condenser_type in ("air", "acc", "air_cooled", "hava", "hava_sogutmali")
 
-    q_cond_kw = max(0.0, (q_orc_total / 1000.0) - w_turb_mech_kw)
+    # 1st law on the cycle fluid: Q_in + W_pump(fluid) = Q_cond + W_turbine(shaft); pump fluid work = electrical * eta(0.70).
+    q_cond_kw = max(0.0, (q_orc_total / 1000.0) + w_cp_pump_kw * 0.70 - w_turb_mech_kw)
     t_cond_sat_c = cyclopentane_tsat(p_cond_bar)
     subcooling_k = max(0.0, t_cond_sat_c - t_cp_in)
 
@@ -577,7 +607,10 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
     npsh_margin_cp = npsh_a_cp - npsh_r_cp
     cp_cavitation_warning = bool(npsh_margin_cp < 0.5)
 
-    w_net_kw = max(0.0, w_turb_kw - w_pump_kw - w_cp_pump_kw - w_cond_parasitic_kw)
+    # Net power may be negative: report it (and block) instead of hiding a parasitic-dominated plant at 0 kW.
+    w_net_kw = w_turb_kw - w_pump_kw - w_cp_pump_kw - w_cond_parasitic_kw
+    net_power_blocked = bool(w_net_kw <= 0.0)
+    thermo_fallback = props_exp["engine"] != "CoolProp Helmholtz EOS"
     eta_orc_thermal = (w_turb_kw / (q_orc_total / 1000.0)) if q_orc_total > 10.0 else 0.0
     overall_eff_pct = (w_net_kw / (q_boiler / 1000.0) * 100.0) if q_boiler > 0 else 0.0
     pinch_warning = bool(delta_t_pinch < 5.0)
@@ -623,6 +656,14 @@ def solve_orc_system(params: dict[str, Any] | None = None) -> dict[str, Any]:
 
     return {
         "params": p,
+        "clamped_inputs": clamped_inputs,
+        "net_power_blocked": net_power_blocked,
+        "thermo_fallback": thermo_fallback,
+        "thermo_fallback_warning": (
+            "CoolProp yok: ideal-gaz/Antoine-Watson yedeği kullanıldı; türbin gücü %18-35 hatalı olabilir."
+            if thermo_fallback
+            else None
+        ),
         "boiler": {
             "Q_kW": round(q_boiler / 1000.0, 2),
             "T_flue_in_C": round(

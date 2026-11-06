@@ -690,6 +690,21 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
         self.assertEqual(f_cross, 0.01)
         self.assertTrue(any("Sıcaklık çakışması" in w for w in warnings))
 
+    def test_temperature_cross_strict_raises_and_rating_marks_infeasible(self):
+        from correlations import _bowman_lmtd_factor
+        from exceptions import TemperatureCrossError
+
+        with self.assertRaises(TemperatureCrossError):
+            _bowman_lmtd_factor(100.0, 20.0, 60.0, 110.0, C_h=1000.0, C_c=1000.0, strict=True)
+
+        hot = Fluid("w", cp=4184.0, density=1000.0, mu=0.001, k_cond=0.6)
+        hx = FinTubeHeatExchanger(hot, hot, U=500.0, A=10.0, flow_type="counter", exchanger_type="shell_and_tube")
+        hx.tube_passes = 2
+        res = hx.calculate_actual_performance(1.0, 1.0, 100.0, 20.0, 30.0, 90.0)
+        self.assertTrue(res["temperature_cross"])
+        self.assertEqual(res["status"], "infeasible")
+        self.assertEqual(res["U_required"], 0)
+
     def test_therminol66_vapor_pressure_and_darcy(self):
         """Verify Therminol 66 temperature-dependent Antoine VP and Darcy pipe helper."""
         from orc_system_model import calc_pipe_darcy, therminol66_vapor_pressure
@@ -763,6 +778,70 @@ class TestPhase5EngineeringEnhancements(unittest.TestCase):
         self.assertIn("Kazan Pinch Farkı (ΔT_pinch)", html)
         self.assertIn("window.latestCalcResult", html)
         self.assertIn("window.updatePlant3D", html)
+
+    def test_provenance_and_equations_traceability(self):
+        """calculate_geometric_U must return a structured provenance block tracing standards and correlations."""
+        hot = Fluid("hot", cp=2000.0, density=900.0, mu=0.001, k_cond=0.2)
+        cold = Fluid("cold", cp=4000.0, density=1000.0, mu=0.001, k_cond=0.6)
+        hx = FinTubeHeatExchanger(
+            hot,
+            cold,
+            U=100.0,
+            A=10.0,
+            flow_type="counter",
+            exchanger_type="shell_and_tube",
+        )
+        geom = {
+            "D_shell": 0.6,
+            "B": 0.3,
+            "pitch": 0.032,
+            "layout": "triangular",
+            "N_tubes": 200,
+            "D_o": 0.025,
+            "D_i": 0.021,
+            "L": 4.0,
+            "L_tube": 4.0,
+            "n_passes": 2,
+            "R_fi": 0.0001,
+            "R_fo": 0.0001,
+            "k_wall": 45.0,
+            "k_w": 45.0,
+        }
+        res = hx.calculate_geometric_U(geom, m_hot=5.0, m_cold=8.0)
+        self.assertIn("provenance", res)
+        prov = res["provenance"]
+        self.assertIn("standards", prov)
+        self.assertTrue(any("TEMA" in s for s in prov["standards"]))
+        self.assertIn("correlations", prov)
+        self.assertIn("validity", prov)
+        self.assertIn("Re_shell", prov["validity"])
+        self.assertIn("Re_tube", prov["validity"])
+
+    def test_tubesheet_svg_standards_disclaimer(self):
+        """Tubesheet SVG must carry explicit notice referencing ASME UHX / TEMA RCB-7 strength sizing."""
+        from tubesheet_component import generate_tubesheet_svg
+
+        svg = generate_tubesheet_svg(
+            D_shell_mm=600.0,
+            D_o_mm=25.0,
+            D_i_mm=21.0,
+            pitch_mm=32.0,
+            layout_angle="30",
+            N_tubes=120,
+        )
+        self.assertIn("ASME Part UHX / TEMA RCB-7", svg)
+
+    def test_hydrostatic_test_pressure_stress_ratio(self):
+        """Hydrostatic test pressure must accurately evaluate ASME UG-99(b) stress ratio S_test / S_design."""
+        from mechanical import hydrostatic_test_pressure
+
+        # Standard test at ambient design (S_test = S_design = 100 MPa): factor 1.3 -> 1.3 * 10 bar = 13 bar
+        p_test_ambient = hydrostatic_test_pressure(MAWP=1.0e6, S_test=100e6, S_design=100e6)
+        self.assertAlmostEqual(p_test_ambient, 1.3e6, delta=1.0)
+
+        # Hot design (S_design = 80 MPa, S_test = 100 MPa): ratio = 1.25 -> 1.3 * 1.0 * 1.25 = 1.625e6
+        p_test_hot = hydrostatic_test_pressure(MAWP=1.0e6, S_test=100e6, S_design=80e6)
+        self.assertAlmostEqual(p_test_hot, 1.625e6, delta=1.0)
 
 
 if __name__ == "__main__":
